@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0009",
+  "name": "问题+建议复合",
+  "question_type": "提出对策",
+  "trigger_signals": ["梳理问题并提出建议", "梳理*问题*提出*建议", "问题*提出*建议", "问题+建议"],
+  "exclusion_signals": ["分析原因并提出对策"],
+  "required_task_elements": ["问题对象", "材料来源范围"],
+  "optional_task_elements": ["建议主体限定"],
+  "default_format_reference": "先梳理问题，再提出建议，双向检验",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构"],
+  "recommended_card_ids": ["sl-card-0017", "sl-card-0025"],
+  "mode_routes": {
+    "审题": ["sl-card-0017"],
+    "解析": ["sl-card-0017", "sl-card-0025"],
+    "批改": ["sl-card-0020"],
+    "修改二稿": ["sl-card-0020"]
+  },
+  "fallback_behavior": "未命中原型时回退到提出对策通用路由",
+  "constraints": ["问题与建议必须双向检验", "不能只处理建议不梳理问题"],
+  "evidence_refs": ["national-exam-2021-municipal-q4", "national-exam-2024-enforcement-q4", "national-exam-2025-sub-provincial-q4"]
+}

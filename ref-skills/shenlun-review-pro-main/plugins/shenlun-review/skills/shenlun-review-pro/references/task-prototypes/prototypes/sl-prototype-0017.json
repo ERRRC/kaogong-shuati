@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0017",
+  "name": "多词关联立意",
+  "question_type": "申发论述",
+  "trigger_signals": ["2-3个并列关键词", "围绕多个关键词写文章", "自选角度*自拟题目*写一篇文章", "以*为题目*写一篇文章", "以*为话题*写一篇文章"],
+  "exclusion_signals": ["辩证", "转化", "劣势转优势", "分与合", "既要*又要", "相辅相成", "相互促进", "流动*新生", "融和*融活"],
+  "required_task_elements": ["关键词列表", "材料来源范围", "字数限制"],
+  "optional_task_elements": ["文体要求"],
+  "default_format_reference": "标题+开头+分论点（各扣一词但体现关联）+结尾",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构", "论证"],
+  "recommended_card_ids": ["sl-card-0046", "sl-card-0080"],
+  "mode_routes": {
+    "审题": ["sl-card-0046"],
+    "解析": ["sl-card-0080", "sl-card-0049"],
+    "批改": ["sl-card-0055"],
+    "修改二稿": ["sl-card-0069"]
+  },
+  "fallback_behavior": "未命中原型时回退到申发论述通用路由",
+  "constraints": ["总论点必须覆盖所有关键词", "不得机械一词一个分论点"],
+  "evidence_refs": ["national-exam-2024-enforcement-q5", "national-exam-2025-enforcement-q5"]
+}

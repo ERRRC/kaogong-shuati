@@ -1,0 +1,12 @@
+{
+  "appId": "com.kaogong.app",
+  "appName": "没钱考什么公",
+  "webDir": "../public",
+  "server": {
+    "androidScheme": "https",
+    "allowNavigation": []
+  },
+  "android": {
+    "allowMixedContent": false
+  }
+}

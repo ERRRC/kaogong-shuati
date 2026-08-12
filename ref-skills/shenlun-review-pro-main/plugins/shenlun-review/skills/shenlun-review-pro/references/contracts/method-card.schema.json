@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Method Card",
+  "description": "A shenlun method card. schema_version 1.2 adds 题型 binding to 影响评分维度.",
+  "type": "object",
+  "required": [
+    "schema_version", "card_id", "方法名", "方法层级", "适用题型", "适用模式",
+    "适用环节", "任务原型", "触发信号", "输入条件", "诊断项", "步骤逻辑",
+    "常见错误", "修改动作", "影响评分维度", "输出产物", "适用边界", "质量等级"
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.2" },
+    "card_id": { "type": "string", "pattern": "^sl-card-\\d{4}$" },
+    "方法名": { "type": "string", "minLength": 1 },
+    "方法层级": { "type": "string", "enum": ["能力内核", "题型工作流", "批改二稿"] },
+    "适用题型": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "enum": ["归纳概括", "综合分析", "提出对策", "贯彻执行", "申发论述"] }
+    },
+    "适用模式": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "enum": ["审题", "解析", "批改", "对照参考答案", "修改二稿", "学情报告"] }
+    },
+    "适用环节": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": { "type": "string", "enum": ["审题", "材料遍", "要点提取", "组织结构", "论证", "表达", "批改", "二稿修改"] }
+    },
+    "任务原型": { "type": "string", "minLength": 1 },
+    "触发信号": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "材料结构特征": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "输入条件": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "诊断项": { "type": "string", "minLength": 1 },
+    "步骤逻辑": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "常见错误": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "修改动作": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "影响评分维度": {
+      "type": "array",
+      "minItems": 1,
+      "uniqueItems": true,
+      "items": {
+        "type": "object",
+        "required": ["题型", "维度名", "影响程度"],
+        "properties": {
+          "题型": {
+            "type": "string",
+            "enum": ["归纳概括", "综合分析", "提出对策", "贯彻执行", "申发论述"]
+          },
+          "维度名": { "type": "string" },
+          "影响程度": { "type": "string", "enum": ["高", "中", "低"] }
+        }
+      }
+    },
+    "输出产物": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "适用边界": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "质量等级": { "type": "string", "enum": ["A", "B"] }
+  }
+}

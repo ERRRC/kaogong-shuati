@@ -1,0 +1,17 @@
+.DS_Store
+__pycache__/
+*.py[cod]
+*.sqlite
+*.sqlite3
+*.db
+*.log
+.pytest_cache/
+.coverage
+htmlcov/
+dist/
+build/
+
+# Local grading receipts and scratch artifacts
+*.receipt.json
+*.tmp
+

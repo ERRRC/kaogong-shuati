@@ -1,0 +1,194 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Analysis Result",
+  "description": "Shared analysis output for all shenlun review modes. See analysis-core.md.",
+  "type": "object",
+  "required": ["schema_version", "analysis_id", "task_id", "question_type", "task_instruction", "constraints", "material_hash", "paragraphs", "atomic_points", "relationships", "recommended_structure", "completeness"],
+  "properties": {
+    "schema_version": { "type": "string", "enum": ["1.0", "1.1"], "description": "1.1 adds task_component_ids, evidence_role, relation_ids, required_or_optional, reference_support to atomic_points; extends relationship types." },
+    "analysis_id": { "type": "string", "minLength": 1, "description": "Stable identifier derived from material hash + task hash" },
+    "task_id": { "type": "string", "minLength": 1 },
+    "question_type": { "type": "string", "enum": ["归纳概括", "综合分析", "提出对策", "贯彻执行", "申发论述"] },
+    "task_instruction": { "type": "string", "minLength": 1 },
+    "constraints": {
+      "type": "object",
+      "properties": {
+        "identity": { "type": ["string", "null"] },
+        "document_type": { "type": ["string", "null"] },
+        "audience": { "type": ["string", "null"] },
+        "word_limit": { "type": ["integer", "null"] },
+        "full_score": { "type": ["number", "null"] },
+        "min_length": { "type": ["integer", "null"], "description": "Lower bound of answer length in length_unit. Null if题面 only gives upper bound." },
+        "max_length": { "type": ["integer", "null"], "description": "Upper bound of answer length in length_unit. Equals word_limit when题面 only gives upper bound." },
+        "length_unit": { "type": ["string", "null"], "enum": ["字", "字符", null], "description": "Length unit. 申论默认'字'。" },
+        "required_format_elements": {
+          "type": "array",
+          "description": "Required format elements determined at审题 by身份/文种/对象/题面. 批改只允许对缺失的必需要素扣格式分。审题/解析/批改/二稿必须复用同一份。",
+          "items": { "type": "string", "enum": ["标题", "称谓", "发文对象", "正文结构", "落款", "署名", "日期"] }
+        }
+      }
+    },
+    "material_hash": { "type": "string", "minLength": 1 },
+    "paragraphs": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["paragraph_id", "text"],
+        "properties": {
+          "paragraph_id": { "type": "string", "minLength": 1 },
+          "text": { "type": "string", "minLength": 1 }
+        }
+      }
+    },
+    "atomic_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["point_id", "paragraph_id", "evidence_text", "point_text", "point_role", "importance", "independent_scoring", "status"],
+        "properties": {
+          "point_id": { "type": "string", "minLength": 1 },
+          "paragraph_id": { "type": "string", "minLength": 1 },
+          "evidence_text": { "type": "string", "minLength": 1, "description": "Must be locatable in the corresponding paragraph" },
+          "point_text": { "type": "string", "minLength": 1 },
+          "point_role": { "type": "string", "enum": ["fact", "measure", "problem", "cause", "effect", "opinion", "data", "background", "policy", "authoritative_view", "public_demand", "successful_practice", "time_condition"] },
+          "importance": { "type": "string", "enum": ["core", "secondary", "potential"] },
+          "independent_scoring": { "type": "boolean", "description": "Whether this point can be scored independently" },
+          "qualifiers": { "type": "array", "items": { "type": "string" } },
+          "task_component_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Task components this point serves (v1.1)"
+          },
+          "evidence_role": {
+            "type": "string",
+            "enum": ["fact", "problem", "cause", "measure", "effect", "data", "policy", "authoritative_view", "public_demand", "successful_practice", "time_condition", "background"],
+            "description": "Extended evidence role classification (v1.1)"
+          },
+          "relation_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "IDs of relationships this point participates in (v1.1)"
+          },
+          "required_or_optional": {
+            "type": "string",
+            "enum": ["required", "optional"],
+            "description": "Whether this point is required by the task or optional (v1.1)"
+          },
+          "reference_support": {
+            "type": "string",
+            "enum": ["supported", "partial", "unsupported", "disputed", "not_applicable"],
+            "description": "Whether reference answers support this point (v1.1)"
+          },
+          "review_status": {
+            "type": "string",
+            "enum": ["confirmed", "candidate", "disputed", "not_applicable"],
+            "description": "点池复核状态；candidate/disputed 不得直接作为确定性硬得分点"
+          },
+          "status": { "type": "string", "enum": ["active", "merged", "excluded"] }
+        }
+      }
+    },
+    "relationships": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["relationship_id", "type", "source_point_ids", "target_point_ids"],
+        "properties": {
+          "relationship_id": { "type": "string", "minLength": 1 },
+          "type": { "type": "string", "enum": ["parallel", "causal", "problem_solution", "opinion_evidence", "contrast", "progressive", "temporal", "condition", "transformation", "concept_relation"] },
+          "source_point_ids": { "type": "array", "items": { "type": "string" } },
+          "target_point_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "recommended_structure": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["section", "content_hint"],
+        "properties": {
+          "section": { "type": "string" },
+          "content_hint": { "type": "string" },
+          "related_point_ids": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "answer_plan": {
+      "type": "object",
+      "description": "Internal plan used before generating a complete reference answer. Optional for non-解析 modes.",
+      "required": ["target_min_length", "target_max_length", "component_budgets", "must_keep_evidence"],
+      "properties": {
+        "target_min_length": { "type": ["integer", "null"], "minimum": 0 },
+        "target_max_length": { "type": "integer", "minimum": 1 },
+        "component_budgets": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["component_id", "target_length"],
+            "properties": {
+              "component_id": { "type": "string", "minLength": 1 },
+              "target_length": { "type": "integer", "minimum": 1 },
+              "point_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+            }
+          }
+        },
+        "must_keep_evidence": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["point_id", "evidence_terms"],
+            "properties": {
+              "point_id": { "type": "string", "minLength": 1 },
+              "evidence_terms": { "type": "array", "minItems": 1, "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+            }
+          }
+        },
+        "compression_order": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "completeness": {
+      "type": "object",
+      "required": ["status", "issues"],
+      "properties": {
+        "status": { "type": "string", "enum": ["complete", "incomplete", "uncertain"] },
+        "issues": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "ocr_issues": {
+      "type": "array",
+      "description": "OCR/转录疑点。疑点未解决时不得把相关文字作为确定性证据或硬得分点。",
+      "items": {
+        "type": "object",
+        "required": ["issue_id", "location", "description", "status"],
+        "properties": {
+          "issue_id": { "type": "string", "minLength": 1 },
+          "location": { "type": "string", "minLength": 1 },
+          "raw_text": { "type": "string" },
+          "description": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["unresolved", "resolved", "ignored"] }
+        }
+      }
+    },
+    "disputes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "properties": {
+          "dispute_id": { "type": "string" },
+          "description": { "type": "string" },
+          "sides": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "method_card_ids": {
+      "type": "array",
+      "maxItems": 5,
+      "uniqueItems": true,
+      "items": {
+        "type": "string",
+        "pattern": "^sl-card-\\d{4}$"
+      },
+      "description": "Matched method card IDs (sl-card-XXXX); max 5; must not modify atomic_points"
+    }
+  }
+}

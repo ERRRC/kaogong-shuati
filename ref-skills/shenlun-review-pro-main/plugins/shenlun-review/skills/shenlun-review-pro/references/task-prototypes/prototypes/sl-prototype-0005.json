@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0005",
+  "name": "争议焦点",
+  "question_type": "综合分析",
+  "trigger_signals": ["争议焦点", "各方观点", "归纳争议"],
+  "exclusion_signals": ["谈谈理解", "分析原因"],
+  "required_task_elements": ["争议主体", "材料来源范围"],
+  "optional_task_elements": ["焦点数量要求"],
+  "default_format_reference": "先总述争议，再分述各方观点和焦点",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构"],
+  "recommended_card_ids": ["sl-card-0026", "sl-card-0035"],
+  "mode_routes": {
+    "审题": ["sl-card-0026"],
+    "解析": ["sl-card-0026", "sl-card-0035"],
+    "批改": ["sl-card-0056"],
+    "修改二稿": []
+  },
+  "fallback_behavior": "未命中原型时回退到综合分析通用路由",
+  "constraints": ["必须区分正反方观点", "焦点必须从材料中提取"],
+  "evidence_refs": ["national-exam-2024-sub-provincial-q2"]
+}

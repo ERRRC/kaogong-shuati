@@ -1,0 +1,33 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Task Prototype",
+  "description": "A shenlun task prototype defining question type, trigger signals, required elements, and recommended method cards.",
+  "type": "object",
+  "required": ["schema_version", "prototype_id", "name", "question_type", "trigger_signals", "exclusion_signals", "required_task_elements", "optional_task_elements", "default_format_reference", "workflow_stages", "recommended_card_ids", "mode_routes", "fallback_behavior", "constraints", "evidence_refs"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "prototype_id": { "type": "string", "pattern": "^sl-prototype-\\d{4}$" },
+    "name": { "type": "string", "minLength": 1 },
+    "question_type": { "type": "string", "enum": ["归纳概括", "综合分析", "提出对策", "贯彻执行", "申发论述"] },
+    "trigger_signals": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "uniqueItems": true },
+    "exclusion_signals": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "required_task_elements": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "uniqueItems": true },
+    "optional_task_elements": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "default_format_reference": { "type": "string", "minLength": 1 },
+    "workflow_stages": { "type": "array", "items": { "type": "string", "minLength": 1 }, "minItems": 1, "uniqueItems": true },
+    "recommended_card_ids": { "type": "array", "items": { "type": "string", "pattern": "^sl-card-\\d{4}$" }, "uniqueItems": true },
+    "mode_routes": {
+      "type": "object",
+      "properties": {
+        "审题": { "type": "array", "items": { "type": "string", "pattern": "^sl-card-\\d{4}$" }, "uniqueItems": true },
+        "解析": { "type": "array", "items": { "type": "string", "pattern": "^sl-card-\\d{4}$" }, "uniqueItems": true },
+        "批改": { "type": "array", "items": { "type": "string", "pattern": "^sl-card-\\d{4}$" }, "uniqueItems": true },
+        "修改二稿": { "type": "array", "items": { "type": "string", "pattern": "^sl-card-\\d{4}$" }, "uniqueItems": true },
+        "学情报告": { "type": "array", "items": { "type": "string", "pattern": "^sl-card-\\d{4}$" }, "uniqueItems": true }
+      }
+    },
+    "fallback_behavior": { "type": "string", "minLength": 1 },
+    "constraints": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true },
+    "evidence_refs": { "type": "array", "items": { "type": "string", "minLength": 1 }, "uniqueItems": true }
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "shenlun-review": {
+    "command": "python3",
+    "args": [
+      "${CLAUDE_PLUGIN_ROOT}/skills/shenlun-review-pro/scripts/shenlun_mcp_server.py"
+    ],
+    "env": {
+      "SHENLUN_SKILL_DIR": "${CLAUDE_PLUGIN_ROOT}/skills/shenlun-review-pro"
+    }
+  }
+}

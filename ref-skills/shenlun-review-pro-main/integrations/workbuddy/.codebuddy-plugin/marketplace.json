@@ -1,0 +1,18 @@
+{
+  "name": "shenlun-review-local",
+  "description": "申论复盘一体版完整插件",
+  "owner": {
+    "name": "jans"
+  },
+  "plugins": [
+    {
+      "name": "shenlun-review",
+      "displayName": "申论复盘一体版",
+      "description": "申论解析、批改、结构化评分与安全执行完整插件。",
+      "version": "1.3.3",
+      "source": "./plugins/shenlun-review",
+      "category": "education",
+      "license": "MIT"
+    }
+  ]
+}

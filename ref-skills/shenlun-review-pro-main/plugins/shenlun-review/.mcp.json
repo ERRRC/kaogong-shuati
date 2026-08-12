@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "shenlun-review": {
+      "command": "python3",
+      "args": [
+        "${CODEX_PLUGIN_ROOT}/skills/shenlun-review-pro/scripts/shenlun_mcp_server.py"
+      ],
+      "env": {
+        "SHENLUN_SKILL_DIR": "${CODEX_PLUGIN_ROOT}/skills/shenlun-review-pro"
+      }
+    }
+  }
+}

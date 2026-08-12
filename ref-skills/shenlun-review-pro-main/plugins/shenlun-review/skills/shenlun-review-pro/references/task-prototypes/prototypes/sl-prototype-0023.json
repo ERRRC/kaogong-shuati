@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0023",
+  "name": "原因概括",
+  "question_type": "归纳概括",
+  "trigger_signals": ["分析原因", "原因有哪些", "主要原因", "原因是什么", "为何", "为什么", "缘由", "因素"],
+  "exclusion_signals": ["并提出对策", "提出对策", "原因+对策", "原因和对策", "为什么说", "谈谈*理解", "这句话", "这段话", "为什么*过程", "方面体现"],
+  "required_task_elements": ["原因对象", "材料来源范围", "字数限制"],
+  "optional_task_elements": ["分类要求", "影响或成效要求"],
+  "default_format_reference": "分条列点，每条含原因提炼词+材料依据或展开",
+  "workflow_stages": ["审题", "材料遍", "原因提取", "分类组织", "表达"],
+  "recommended_card_ids": ["sl-card-0001", "sl-card-0003", "sl-card-0009"],
+  "mode_routes": {
+    "审题": ["sl-card-0001"],
+    "解析": ["sl-card-0001", "sl-card-0003"],
+    "批改": ["sl-card-0009"],
+    "修改二稿": ["sl-card-0008"]
+  },
+  "fallback_behavior": "未命中原型时回退到归纳概括通用路由",
+  "constraints": ["原因必须有材料依据", "不得把结果、例子或背景直接当作独立原因", "原因与表现、影响要区分"],
+  "evidence_refs": ["national-exam-general-cause-analysis"]
+}

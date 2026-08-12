@@ -1,0 +1,140 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "TaskSpec",
+  "description": "Structured task specification for a single shenlun question. Derived from paper analysis and task prototype matching.",
+  "type": "object",
+  "required": ["schema_version", "paper_id", "question_id", "task_id", "task_instruction", "material_scope", "full_score", "primary_prototype_id", "task_components"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "fixture_id": { "type": "string", "pattern": "^ts-\\d{4}$", "description": "Fixture ID for testing (ts-XXXX). Only present in test fixtures." },
+    "source_file": { "type": "string", "description": "Source PDF filename. Only present in test fixtures." },
+    "paper_id": { "type": "string", "minLength": 1, "description": "Parent paper identifier (e.g. paper-2021-national-subprovincial)" },
+    "question_id": { "type": "string", "minLength": 1, "description": "Question number within paper (e.g. q1, q2)" },
+    "task_id": { "type": "string", "minLength": 1, "description": "Unique task identifier combining paper_id and question_id" },
+    "task_instruction": { "type": "string", "minLength": 1, "description": "Complete task instruction verbatim from the exam paper" },
+    "material_scope": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string" },
+      "description": "Material section IDs referenced by this question (e.g. material-1, material-2)"
+    },
+    "full_score": { "type": "number", "exclusiveMinimum": 0, "description": "Maximum score for this question. Must be > 0." },
+    "identity": { "type": ["string", "null"], "description": "Identity/role the answerer must assume (e.g. 某部门工作人员)" },
+    "audience": { "type": ["string", "null"], "description": "Intended audience of the output" },
+    "purpose": { "type": ["string", "null"], "description": "Purpose of the task as stated or implied by the question" },
+    "output_genre": { "type": ["string", "null"], "description": "Output document type (e.g. 情况报告, 提案, 短评)" },
+    "primary_prototype_id": {
+      "type": ["string", "null"],
+      "description": "ID of the primary task prototype that best matches this question. Must be a real sl-prototype-XXXX, null, or 'general-fallback'. Method card IDs are forbidden."
+    },
+    "prototype_resolution_receipt": {
+      "type": "object",
+      "description": "resolve-task-prototype 的真实命中回执。申发论述正式评分必须携带。",
+      "required": ["passed", "matched_from_real_prototype", "prototype_id"],
+      "properties": {
+        "passed": { "type": "boolean", "const": true },
+        "matched_from_real_prototype": { "type": "boolean", "const": true },
+        "prototype_id": { "type": "string", "pattern": "^sl-prototype-[0-9]{4}$" }
+      }
+    },
+    "task_components": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "enum": [
+          "summary",
+          "change_summary",
+          "classification",
+          "concept_explanation",
+          "relationship_analysis",
+          "achievement_summary",
+          "problem_diagnosis",
+          "cause_analysis",
+          "recommendation",
+          "scenario_expression",
+          "argumentation"
+        ]
+      },
+      "uniqueItems": true,
+      "description": "Task components identified in the question. Multiple allowed."
+    },
+    "required_content_elements": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Content elements explicitly required by the question instruction"
+    },
+    "optional_content_elements": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["element", "basis"],
+        "properties": {
+          "element": { "type": "string" },
+          "basis": { "type": "string", "description": "Why this is optional: material structure or genre convention" }
+        }
+      },
+      "description": "Optional content elements derived from material structure or genre conventions"
+    },
+    "required_format_elements": {
+      "type": "array",
+      "items": {
+        "type": "string",
+        "enum": ["标题", "称谓", "发文对象", "正文结构", "落款", "署名", "日期"]
+      },
+      "description": "Required format elements determined from question instruction. Question instruction takes precedence over genre defaults."
+    },
+    "relation_requirements": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Required relationships between content elements (e.g. 问题与建议对应)"
+    },
+    "style_requirements": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Style or tone requirements stated in the question"
+    },
+    "min_length": { "type": ["integer", "null"], "description": "Minimum answer length. Null if only upper bound given." },
+    "max_length": { "type": ["integer", "null"], "description": "Maximum answer length" },
+    "length_unit": { "type": ["string", "null"], "enum": ["字", "字符", null], "default": "字" },
+    "subtasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["subtask_id", "instruction", "task_components"],
+        "properties": {
+          "subtask_id": { "type": "string" },
+          "instruction": { "type": "string" },
+          "task_components": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "enum": [
+                "summary", "change_summary", "classification", "concept_explanation",
+                "relationship_analysis", "achievement_summary", "problem_diagnosis",
+                "cause_analysis", "recommendation", "scenario_expression", "argumentation"
+              ]
+            }
+          },
+          "material_scope": { "type": "array", "items": { "type": "string" } },
+          "max_length": { "type": ["integer", "null"] }
+        }
+      },
+      "description": "Subtasks for multi-part questions (e.g. 2021 subprovincial Q3)"
+    },
+    "shared_length_limit": { "type": ["integer", "null"], "description": "Shared word limit across all subtasks" },
+    "uncertainty": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Uncertain elements that need human verification"
+    },
+    "evidence": {
+      "type": "object",
+      "description": "Page references for traceability",
+      "properties": {
+        "question_page": { "type": ["integer", "null"] },
+        "answer_page": { "type": ["integer", "null"] }
+      }
+    }
+  }
+}

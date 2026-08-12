@@ -1,0 +1,15 @@
+{
+  "name": "shenlun-review",
+  "version": "1.3.3",
+  "description": "申论复盘一体版完整插件：包含申论 Skill、结构化评分 MCP 和安全执行 Hook。",
+  "author": {
+    "name": "jans"
+  },
+  "repository": "https://github.com/liuyuexi1987/shenlun-review-pro",
+  "license": "MIT",
+  "skills": [
+    "./skills/shenlun-review-pro"
+  ],
+  "mcpServers": "./.mcp.json",
+  "hooks": "./hooks/workbuddy-hooks.json"
+}

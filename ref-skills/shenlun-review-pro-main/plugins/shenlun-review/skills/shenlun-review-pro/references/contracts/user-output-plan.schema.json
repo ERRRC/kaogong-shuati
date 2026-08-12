@@ -1,0 +1,82 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "User Output Plan",
+  "description": "Structured output plan that drives user-visible prose generation. Must be validated against analysis_result, score_ledger, and scoring_result before prose is shown to the user.",
+  "type": "object",
+  "required": ["final_score", "earned_point_ids", "partial_point_ids", "omitted_point_ids", "extra_material_claim_ids", "dimension_results", "relationship_claims"],
+  "properties": {
+    "final_score": {
+      "type": "object",
+      "required": ["center_value", "interval", "confidence"],
+      "properties": {
+        "center_value": { "type": "number" },
+        "interval": {
+          "type": "object",
+          "required": ["lower", "upper"],
+          "properties": {
+            "lower": { "type": "number" },
+            "upper": { "type": "number" }
+          }
+        },
+        "confidence": { "type": "string", "enum": ["high", "medium", "low"] }
+      }
+    },
+    "earned_point_ids": {
+      "type": "array",
+      "description": "Scorable points with ledger coverage_status 完整覆盖 or 等义表达",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "partial_point_ids": {
+      "type": "array",
+      "description": "Scorable points with ledger coverage_status 部分覆盖",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "omitted_point_ids": {
+      "type": "array",
+      "description": "Scorable points with ledger coverage_status 未覆盖",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "extra_material_claim_ids": {
+      "type": "array",
+      "description": "Legitimate extra-material claims (not scorable points)",
+      "items": { "type": "string" },
+      "uniqueItems": true
+    },
+    "dimension_results": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Must cover all scoring dimensions exactly once, matching scoring_result.dimensions",
+      "items": {
+        "type": "object",
+        "required": ["dimension_name", "level", "score"],
+        "properties": {
+          "dimension_name": { "type": "string", "minLength": 1 },
+          "level": { "type": "integer", "minimum": 0, "maximum": 4 },
+          "score": { "type": "number" },
+          "evidence_point_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "uniqueItems": true
+          }
+        }
+      }
+    },
+    "relationship_claims": {
+      "type": "array",
+      "description": "Each claim must reference a real relationship_id from analysis_result. Source/target point_ids must match when provided.",
+      "items": {
+        "type": "object",
+        "required": ["relationship_id", "claim_text"],
+        "properties": {
+          "relationship_id": { "type": "string", "minLength": 1 },
+          "claim_text": { "type": "string", "minLength": 1 },
+          "source_point_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true },
+          "target_point_ids": { "type": "array", "items": { "type": "string" }, "uniqueItems": true }
+        }
+      }
+    }
+  }
+}

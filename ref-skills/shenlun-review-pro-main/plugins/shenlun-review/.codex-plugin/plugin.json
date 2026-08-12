@@ -1,0 +1,34 @@
+{
+  "name": "shenlun-review",
+  "version": "1.3.3",
+  "description": "申论材料解析、作答批改、结构化评分与成稿校验插件。",
+  "author": {
+    "name": "jans"
+  },
+  "repository": "https://github.com/liuyuexi1987/shenlun-review-pro",
+  "license": "MIT",
+  "keywords": [
+    "申论",
+    "批改",
+    "公务员考试"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./.mcp.json",
+  "interface": {
+    "displayName": "申论复盘一体版",
+    "shortDescription": "解析申论材料并批改作答。",
+    "longDescription": "提供申论整卷定位、单题解析、五档评分、失分诊断、示范答案与结构化成稿校验。",
+    "developerName": "jans",
+    "category": "Education",
+    "capabilities": [
+      "申论解析",
+      "申论批改",
+      "结构化评分"
+    ],
+    "defaultPrompt": [
+      "解析这道申论题并给出示范答案。",
+      "批改我的申论作答并给出档位和建议分。",
+      "按顺序处理我接下来发送的整套申论试卷。"
+    ]
+  }
+}

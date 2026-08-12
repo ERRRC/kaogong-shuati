@@ -1,0 +1,8 @@
+﻿<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">没钱考什么公</string>
+    <string name="title_activity_main">没钱考什么公</string>
+    <string name="package_name">com.kaogong.app</string>
+    <string name="custom_url_scheme">com.kaogong.app</string>
+</resources>
+

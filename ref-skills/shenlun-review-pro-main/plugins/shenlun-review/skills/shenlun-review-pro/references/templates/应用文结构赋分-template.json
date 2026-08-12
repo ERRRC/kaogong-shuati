@@ -1,0 +1,79 @@
+{
+  "_comment": "应用文结构赋分模板（v0.4）。用于贯彻执行题的 structure_ledger 构造。",
+  "_usage": "AI 在材料遍后，根据题型和材料结构确定板块，填入 element_id/element_type/element_value/required/basis。批改时填入 status/user_evidence。引擎自动计算 earned_value。",
+  "schema_version": "1.0",
+  "ledger_id": "<task_id>-structure",
+  "task_id": "<from task_spec>",
+  "answer_id": "<from scoring-input>",
+  "point_ledger": [],
+  "structure_ledger": [
+    {
+      "element_id": "format",
+      "element_type": "format",
+      "required": true,
+      "basis": "题面要求格式正确（标题、称谓、落款等）",
+      "element_value": 3,
+      "user_evidence": null,
+      "status": "missing",
+      "credit_reason": null,
+      "loss_reason": null,
+      "deduction_owner": "身份文种格式",
+      "modification_action": null
+    },
+    {
+      "element_id": "background",
+      "element_type": "content_component",
+      "required": true,
+      "basis": "材料中有背景/原因信息，需要在作答中体现",
+      "element_value": 3,
+      "user_evidence": null,
+      "status": "missing",
+      "credit_reason": null,
+      "loss_reason": null,
+      "deduction_owner": "内容覆盖",
+      "modification_action": null
+    },
+    {
+      "element_id": "main_content",
+      "element_type": "content_component",
+      "required": true,
+      "basis": "材料核心内容，按主体/层面赋分，不逐词抠",
+      "element_value": 10,
+      "user_evidence": null,
+      "status": "missing",
+      "credit_reason": null,
+      "loss_reason": null,
+      "deduction_owner": "内容覆盖",
+      "modification_action": null
+    },
+    {
+      "element_id": "appeal_ending",
+      "element_type": "content_component",
+      "required": false,
+      "basis": "呼吁/号召/结语（有即得分，不看怎么写的）",
+      "element_value": 2,
+      "user_evidence": null,
+      "status": "not_applicable",
+      "credit_reason": null,
+      "loss_reason": null,
+      "deduction_owner": null,
+      "modification_action": null
+    },
+    {
+      "element_id": "language_fluency",
+      "element_type": "style",
+      "required": true,
+      "basis": "语言通顺、符合身份和文种",
+      "element_value": 2,
+      "user_evidence": null,
+      "status": "missing",
+      "credit_reason": null,
+      "loss_reason": null,
+      "deduction_owner": "语言语气",
+      "modification_action": null
+    }
+  ],
+  "allowed_variants": [],
+  "forbidden_results": [],
+  "issues": []
+}

@@ -1,0 +1,80 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Draft Comparison",
+  "description": "Comparison of two drafts against the same analysis_id. Not pure text similarity.",
+  "type": "object",
+  "required": ["schema_version", "analysis_id", "draft_1_scoring_id", "draft_2_scoring_id", "point_changes", "dimension_changes", "total_change", "residual_issues"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "analysis_id": { "type": "string", "minLength": 1 },
+    "draft_1_scoring_id": { "type": "string" },
+    "draft_2_scoring_id": { "type": "string" },
+    "point_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["point_id", "draft_1_status", "draft_2_status", "change_type"],
+        "properties": {
+          "point_id": { "type": "string" },
+          "draft_1_status": { "type": "string", "enum": ["完整覆盖", "部分覆盖", "等义表达", "未覆盖", "超出材料"] },
+          "draft_2_status": { "type": "string", "enum": ["完整覆盖", "部分覆盖", "等义表达", "未覆盖", "超出材料"] },
+          "change_type": {
+            "type": "string",
+            "enum": ["newly_covered", "partial_to_full", "full_to_lost", "equivalence_improved", "structure_improved", "expression_only", "new_excess", "unchanged"],
+            "description": "Must be consistent with (draft_1_status -> draft_2_status). newly_covered: 未覆盖->完整覆盖/部分覆盖/等义表达; partial_to_full: 部分覆盖->完整覆盖/等义表达; full_to_lost: 完整覆盖/等义表达->未覆盖; expression_only: 无新增实质语义/关系/得分点的表面改写(状态可变可不变但无实质改善); new_excess: ->超出材料; unchanged: 状态不变且无实质改善. 部分->部分 不得用 partial_to_full."
+          }
+        }
+      }
+    },
+    "dimension_changes": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["dimension_name", "draft_1_level", "draft_2_level", "draft_1_score", "draft_2_score", "score_delta"],
+        "properties": {
+          "dimension_name": { "type": "string" },
+          "draft_1_level": { "type": "integer", "minimum": 0, "maximum": 4 },
+          "draft_2_level": { "type": "integer", "minimum": 0, "maximum": 4 },
+          "draft_1_score": { "type": "number" },
+          "draft_2_score": { "type": "number" },
+          "score_delta": { "type": "number" }
+        }
+      }
+    },
+    "total_change": {
+      "type": "object",
+      "required": ["draft_1_center", "draft_2_center", "draft_1_interval", "draft_2_interval"],
+      "properties": {
+        "draft_1_center": { "type": "number" },
+        "draft_2_center": { "type": "number" },
+        "draft_1_interval": { "type": "object", "properties": { "lower": { "type": "number" }, "upper": { "type": "number" } } },
+        "draft_2_interval": { "type": "object", "properties": { "lower": { "type": "number" }, "upper": { "type": "number" } } }
+      }
+    },
+    "residual_issues": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Top 3 remaining issues after draft 2"
+    },
+    "surface_rewrite_warning": {
+      "type": "boolean",
+      "description": "True if expression changed but no score improvement"
+    },
+    "coverage_summary_d1": {
+      "type": "object",
+      "description": "Coverage counts for draft_1, recomputed from point_changes.draft_1_status. Must equal draft_1.coverage_summary if present.",
+      "properties": {
+        "完整覆盖": { "type": "integer" }, "部分覆盖": { "type": "integer" },
+        "等义表达": { "type": "integer" }, "未覆盖": { "type": "integer" }, "超出材料": { "type": "integer" }
+      }
+    },
+    "coverage_summary_d2": {
+      "type": "object",
+      "description": "Coverage counts for draft_2, recomputed from point_changes.draft_2_status. Must equal draft_2.coverage_summary if present.",
+      "properties": {
+        "完整覆盖": { "type": "integer" }, "部分覆盖": { "type": "integer" },
+        "等义表达": { "type": "integer" }, "未覆盖": { "type": "integer" }, "超出材料": { "type": "integer" }
+      }
+    }
+  }
+}

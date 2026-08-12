@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0022",
+  "name": "关系命题论证",
+  "question_type": "申发论述",
+  "trigger_signals": ["正确处理*关系", "既要*又要", "相辅相成", "相互促进", "相互依存", "对立统一", "表象*实质", "分工*合", "分与合"],
+  "exclusion_signals": ["劣势转优势"],
+  "required_task_elements": ["关系双方", "关系方向", "材料来源范围", "字数限制"],
+  "optional_task_elements": ["关系条件", "关系边界"],
+  "default_format_reference": "标题+开头（提出关系命题）+分论点（分别解释双方及其连接）+结尾（回扣统一关系）",
+  "workflow_stages": ["审题", "材料遍", "关系识别", "组织结构", "论证"],
+  "recommended_card_ids": ["sl-card-0046", "sl-card-0081"],
+  "mode_routes": {
+    "审题": ["sl-card-0046"],
+    "解析": ["sl-card-0081", "sl-card-0049"],
+    "批改": ["sl-card-0055"],
+    "修改二稿": ["sl-card-0069"]
+  },
+  "fallback_behavior": "未命中关系信号时停止，不得凭多个主题词自行判为关系命题",
+  "constraints": ["先确认关系是否为题目核心命题", "必须覆盖关系双方及其连接", "不得把关系命题缩成单边口号"],
+  "evidence_refs": []
+}

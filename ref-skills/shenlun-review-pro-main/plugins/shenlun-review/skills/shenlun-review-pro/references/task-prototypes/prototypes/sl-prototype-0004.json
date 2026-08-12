@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0004",
+  "name": "问题梳理",
+  "question_type": "归纳概括",
+  "trigger_signals": ["梳理问题", "存在哪些问题", "指出不足"],
+  "exclusion_signals": ["概括做法", "概括变化", "提出对策"],
+  "required_task_elements": ["问题主体", "材料来源范围"],
+  "optional_task_elements": ["分类要求"],
+  "default_format_reference": "分条列点，每条含问题提炼词+展开",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构"],
+  "recommended_card_ids": ["sl-card-0001", "sl-card-0022"],
+  "mode_routes": {
+    "审题": ["sl-card-0001", "sl-card-0022"],
+    "解析": ["sl-card-0001", "sl-card-0022"],
+    "批改": ["sl-card-0009"],
+    "修改二稿": ["sl-card-0008"]
+  },
+  "fallback_behavior": "未命中原型时回退到归纳概括通用路由",
+  "constraints": ["得分点只能来自材料", "问题必须有材料依据"],
+  "evidence_refs": ["national-exam-2023-municipal-q1"]
+}

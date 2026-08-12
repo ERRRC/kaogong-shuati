@@ -1,0 +1,21 @@
+{
+  "$schema": "https://anthropic.com/claude-code/marketplace.schema.json",
+  "name": "shenlun-review",
+  "description": "申论材料解析、作答批改、结构化评分与复盘插件。",
+  "owner": {
+    "name": "jans"
+  },
+  "plugins": [
+    {
+      "name": "shenlun-review",
+      "description": "申论材料解析、作答批改、五档评分、失分诊断与示范答案。",
+      "version": "1.3.3",
+      "author": {
+        "name": "jans"
+      },
+      "source": "./plugins/shenlun-review",
+      "category": "education",
+      "homepage": "https://github.com/liuyuexi1987/shenlun-review-pro"
+    }
+  ]
+}

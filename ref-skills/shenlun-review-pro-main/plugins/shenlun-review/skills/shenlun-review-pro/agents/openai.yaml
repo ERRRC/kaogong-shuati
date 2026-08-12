@@ -1,0 +1,7 @@
+interface:
+  display_name: "申论复盘一体版"
+  short_description: "申论材料精读、单题批改、五档评分、失分诊断与复盘助手"
+  default_prompt: "使用 $shenlun-review-pro 解析这道申论题，或批改我提供的作答。"
+
+policy:
+  allow_implicit_invocation: true

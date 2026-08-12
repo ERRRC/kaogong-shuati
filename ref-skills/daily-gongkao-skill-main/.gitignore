@@ -1,0 +1,22 @@
+# Local runtime data
+/data/state.json
+/data/wrong_answers.jsonl
+/data/answer_records.jsonl
+/data/ocr_results/*
+!/data/ocr_results/.gitkeep
+/data/raw_pdfs/*
+!/data/raw_pdfs/.gitkeep
+
+# Python cache
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+
+# vscode
+.vscode
+
+# codex
+agents
+AGENTS.md

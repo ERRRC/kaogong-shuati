@@ -1,0 +1,22 @@
+name: validate
+
+on:
+  push:
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Compile Python
+        run: python3 -m compileall -q plugins scripts integrations tests
+      - name: Validate JSON
+        run: python3 -c 'import json,pathlib; [json.loads(p.read_text(encoding="utf-8")) for p in pathlib.Path(".").rglob("*.json") if ".git" not in p.parts]'
+      - name: Run engine tests
+        run: python3 -m unittest discover -s plugins/shenlun-review/skills/shenlun-review-pro/tests -v
+      - name: Run integration tests
+        run: python3 -m unittest discover -s tests -v

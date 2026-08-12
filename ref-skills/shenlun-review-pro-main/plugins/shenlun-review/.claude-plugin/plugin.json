@@ -1,0 +1,19 @@
+{
+  "name": "shenlun-review",
+  "version": "1.3.3",
+  "description": "申论材料解析、作答批改、结构化评分与安全执行插件。",
+  "author": {
+    "name": "jans"
+  },
+  "homepage": "https://github.com/liuyuexi1987/shenlun-review-pro",
+  "repository": "https://github.com/liuyuexi1987/shenlun-review-pro",
+  "license": "MIT",
+  "keywords": [
+    "申论",
+    "批改",
+    "公务员考试"
+  ],
+  "skills": "./skills/",
+  "mcpServers": "./config/claude/.mcp.json",
+  "hooks": "./hooks/claude-hooks.json"
+}

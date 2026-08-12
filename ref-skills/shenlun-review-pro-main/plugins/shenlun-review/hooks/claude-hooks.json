@@ -1,0 +1,17 @@
+{
+  "description": "阻止申论普通批改绕过结构化 MCP 工具或安全入口",
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash|Write|Edit|MultiEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 \"${CLAUDE_PLUGIN_ROOT}/skills/shenlun-review-pro/scripts/pretooluse_guard.py\"",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

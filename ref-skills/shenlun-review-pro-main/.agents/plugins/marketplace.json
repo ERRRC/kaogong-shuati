@@ -1,0 +1,20 @@
+{
+  "name": "shenlun-review",
+  "interface": {
+    "displayName": "申论复盘一体版"
+  },
+  "plugins": [
+    {
+      "name": "shenlun-review",
+      "source": {
+        "source": "local",
+        "path": "./plugins/shenlun-review"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Education"
+    }
+  ]
+}

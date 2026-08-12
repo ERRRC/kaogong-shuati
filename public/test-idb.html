@@ -1,0 +1,131 @@
+﻿<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<title>idb-test</title>
+<style>
+  body { font-family: monospace; margin: 16px; background: #111; color: #eee; }
+  pre { white-space: pre-wrap; }
+  .ok { color: #4caf50; } .fail { color: #f44336; }
+</style>
+</head>
+<body>
+<h1 id="title">IndexedDB 适配器测试</h1>
+<pre id="result">running…</pre>
+<script type="module">
+  // public/test-idb.html — 阶段 3 浏览器端验证：
+  //   ?phase=write  清库 → 直接测 idb-store（put/覆盖/deleteBy/getAll）+ 经 initLocalApiBrowser 测 records API 协同
+  //   ?phase=read   新页面（模拟杀进程重启）→ 校验数据保留 + records API 读取
+  // 页面用 document.title 与 #result 输出结果，供自动化断言。
+  import { createIdbStore } from './idb-store.js';
+  import { initLocalApiBrowser } from './local-api.js';
+
+  const qs = new URLSearchParams(location.search);
+  const phase = qs.get('phase') || 'write';
+  const DB = qs.get('db') || 'kaogong-idb-test';
+  const out = [];
+  let failed = 0;
+  const ok = (name, cond, extra = '') => {
+    out.push(`${cond ? '✓' : '✗'} ${name}${extra ? '  ' + extra : ''}`);
+    if (!cond) failed++;
+  };
+
+  // 假题库引擎：查询返回空（records API 的 content 查询 get 返回 null 即可）
+  const fakeTiku = { get: () => null, all: () => [] };
+
+  async function runWrite() {
+    const store = createIdbStore({ dbName: DB, version: 1 });
+    // 0) 清库（幂等重置）
+    await store.clear('records');
+    await store.clear('favorites');
+
+    // 1) put 自动生成 id
+    await store.put('records', { question_id: 'q1', paper_id: null, subject: '公务员·行测', chapter: 'ch1', question_type: 'single', selected: [1], is_correct: 0, cost_ms: 3000, created_at: 5000 });
+    await store.put('records', { question_id: 'q2', paper_id: null, subject: '公务员·行测', chapter: 'ch2', question_type: 'single', selected: [0], is_correct: 1, cost_ms: 2000, created_at: 6000 });
+    let rows = await store.getAll('records');
+    ok('put 2 条 records 且自动生成 id', rows.length === 2 && rows.every((r) => r.id != null), JSON.stringify(rows.map((r) => r.id).map((i) => String(i).slice(0, 8))));
+    const r1Id = rows.find((r) => r.question_id === 'q1').id;
+
+    // 2) 同 id 覆盖 = 更新（保留最新状态）
+    await store.put('records', { id: r1Id, question_id: 'q1', paper_id: null, subject: '公务员·行测', chapter: 'ch1', question_type: 'single', selected: [1], is_correct: 1, cost_ms: 4000, created_at: 7000 });
+    rows = await store.getAll('records');
+    ok('同 id put 覆盖更新', rows.length === 2 && rows.find((r) => r.id === r1Id).is_correct === 1);
+
+    // 3) favorites 以 question_id 为 key；deleteBy 删除
+    await store.put('favorites', { question_id: 'q-fav-1', subject: '公务员·行测', chapter: 'ch1', created_at: 1000 });
+    await store.put('favorites', { question_id: 'q-fav-2', subject: '公务员·申论', chapter: 'sl1', created_at: 2000 });
+    let favs = await store.getAll('favorites');
+    ok('put 2 条 favorites', favs.length === 2);
+    await store.deleteBy('favorites', 'question_id', 'q-fav-2');
+    favs = await store.getAll('favorites');
+    ok('deleteBy question_id', favs.length === 1 && favs[0].question_id === 'q-fav-1');
+
+    // 4) deleteBy('records','id',…)（addRecord 去重依赖）
+    await store.deleteBy('records', 'id', r1Id);
+    rows = await store.getAll('records');
+    ok('deleteBy records id', rows.length === 1 && rows[0].question_id === 'q2');
+
+    // 5) local-api + IndexedDB 协同（records API 走真实 store）
+    const api = await initLocalApiBrowser({ tiku: fakeTiku, store });
+    await api.records.toggleFavorite('q-fav-3', { subject: '公务员·综应' });
+    ok('API toggleFavorite 添加', (await api.records.favoriteIds()).size === 2);
+    await api.records.toggleFavorite('q-fav-3', {});
+    ok('API toggleFavorite 取消', (await api.records.favoriteIds()).size === 1);
+    await api.records.toggleFavorite('q-fav-1', { subject: '公务员·行测' });
+    ok('API toggleFavorite 取消已有 q-fav-1', (await api.records.favoriteIds()).size === 0);
+
+    // 6) addRecord 同日去重更新（错 → 对）
+    await api.records.addRecord({ questionId: 'q-new', subject: '公务员·行测', chapter: 'ch9', type: 'single', selected: [0], correct: false, costMs: 1000, paperId: 'p1' });
+    await api.records.addRecord({ questionId: 'q-new', subject: '公务员·行测', chapter: 'ch9', type: 'single', selected: [1], correct: true, costMs: 2000, paperId: 'p1' });
+    rows = await store.getAll('records');
+    const qNew = rows.filter((r) => r.question_id === 'q-new');
+    ok('addRecord 同日去重为 1 条且更新为正确', qNew.length === 1 && qNew[0].is_correct === 1);
+    ok('records 最终 2 条（q2 + q-new）', rows.length === 2);
+
+    // 7) 重启保留基线：再补一条 favorite 供 read 阶段核对
+    await store.put('favorites', { question_id: 'q-fav-1', subject: '公务员·行测', chapter: 'ch1', created_at: 1000 });
+
+    const snap = { records: (await store.getAll('records')).map((r) => ({ question_id: r.question_id, is_correct: r.is_correct })), favorites: (await store.getAll('favorites')).map((f) => f.question_id) };
+    out.push(`SNAP ${JSON.stringify(snap)}`);
+    await store.close();
+  }
+
+  async function runRead() {
+    const store = createIdbStore({ dbName: DB, version: 1 });
+    // 模拟重启后读取：数据必须完整保留
+    const rows = await store.getAll('records');
+    const favs = await store.getAll('favorites');
+    const snapExpect = { records: { 'q2': 1, 'q-new': 1 }, favorites: [ 'q-fav-1' ] };
+    const got = { records: Object.fromEntries(rows.map((r) => [r.question_id, r.is_correct])), favorites: favs.map((f) => f.question_id) };
+    const eqMap = (a, b) => Object.keys(a).length === Object.keys(b).length && Object.entries(a).every(([k, v]) => b[k] === v);
+    ok('重启后 records 保留（2 条、内容一致）', eqMap(got.records, snapExpect.records), JSON.stringify(got.records));
+    ok('重启后 favorites 保留', JSON.stringify(got.favorites) === JSON.stringify(snapExpect.favorites), JSON.stringify(got.favorites));
+
+    // records API 读取面（重启后仍可用）
+    const api = await initLocalApiBrowser({ tiku: fakeTiku, store });
+    const favList = await api.records.favorites();
+    ok('API favorites 列表 total=1', favList.total === 1 && favList.list[0].questionId === 'q-fav-1');
+    const stats = await api.records.stats();
+    ok('API stats 形状', stats && typeof stats.total === 'number' && stats.total >= 2, JSON.stringify({ total: stats.total, done: stats.done }));
+    const wrong = await api.records.wrong();
+    ok('API wrong 列表（2 条均正确 → 空）', wrong && wrong.total === 0 && wrong.list.length === 0);
+    const recent = await api.records.recent();
+    ok('API recent 列表', Array.isArray(recent) && recent.length === 2);
+    await store.close();
+  }
+
+  try {
+    if (phase === 'write') await runWrite(); else await runRead();
+  } catch (e) {
+    failed++;
+    out.push(`✗ 异常: ${e && e.stack ? e.stack.split('\n').slice(0, 3).join('\n') : e}`);
+  }
+  const verdict = failed === 0 ? 'PASS' : 'FAIL';
+  document.title = `idb-${phase}-${verdict}`;
+  document.getElementById('result').textContent = out.join('\n');
+  document.getElementById('result').className = verdict === 'PASS' ? 'ok' : 'fail';
+  console.log(`[idb-test] ${phase} ${verdict}\n` + out.join('\n'));
+</script>
+</body>
+</html>
+

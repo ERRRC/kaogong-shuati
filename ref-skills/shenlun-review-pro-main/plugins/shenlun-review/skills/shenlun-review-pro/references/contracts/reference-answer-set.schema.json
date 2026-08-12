@@ -1,0 +1,109 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ReferenceAnswerSet",
+  "description": "Reference answer set for a single question. All supplied answer sources use one reference-assisted route; source labels are retained only for traceability.",
+  "type": "object",
+  "required": ["schema_version", "reference_set_id", "paper_id", "question_id", "answers", "source_confidence"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "reference_set_id": { "type": "string", "minLength": 1 },
+    "paper_id": { "type": "string", "minLength": 1 },
+    "question_id": { "type": "string", "minLength": 1 },
+    "answers": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["answer_id", "label", "source_type", "answer_text"],
+        "properties": {
+          "answer_id": { "type": "string", "minLength": 1 },
+          "label": { "type": "string", "description": "Short label (e.g. H版, F版, 参考答案)" },
+          "source_type": {
+            "type": "string",
+            "enum": ["official_rubric", "official_answer", "institution_answer", "teacher_answer", "unverified"],
+            "description": "Traceability label only; it does not change route, point-pool weight, confidence, tier, or score."
+          },
+          "source_note": { "type": ["string", "null"], "description": "Additional source provenance info" },
+          "reliability": {
+            "type": "string",
+            "enum": ["high", "medium", "low"],
+            "description": "Historical traceability field only; it does not change route, point-pool weight, confidence, tier, or score."
+          },
+          "answer_text": { "type": "string", "minLength": 1 },
+          "supported_point_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Point IDs from analysis that this answer supports"
+          },
+          "structure_summary": { "type": ["string", "null"], "description": "Brief description of answer structure" }
+        }
+      }
+    },
+    "consensus_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["point_text", "supporting_answer_ids"],
+        "properties": {
+          "point_text": { "type": "string" },
+          "supporting_answer_ids": { "type": "array", "items": { "type": "string" } },
+          "analysis_point_id": { "type": ["string", "null"], "description": "Linked analysis point ID if applicable" }
+        }
+      },
+      "description": "Points agreed upon by multiple answers"
+    },
+    "disputed_points": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["description", "answer_positions"],
+        "properties": {
+          "description": { "type": "string" },
+          "answer_positions": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": ["answer_id", "position"],
+              "properties": {
+                "answer_id": { "type": "string" },
+                "position": { "type": "string" }
+              }
+            }
+          }
+        }
+      },
+      "description": "Points where answers disagree"
+    },
+    "equivalent_expressions": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["expressions", "canonical_form"],
+        "properties": {
+          "expressions": { "type": "array", "items": { "type": "string" } },
+          "canonical_form": { "type": "string" }
+        }
+      },
+      "description": "Different phrasings that convey the same meaning"
+    },
+    "structure_variants": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["answer_id", "structure_type", "sections"],
+        "properties": {
+          "answer_id": { "type": "string" },
+          "structure_type": { "type": "string" },
+          "sections": { "type": "array", "items": { "type": "string" } }
+        }
+      },
+      "description": "Different organizational structures across answers"
+    },
+    "source_confidence": {
+      "type": "string",
+      "enum": ["high", "medium", "low"],
+      "description": "Historical traceability field only; it does not change route, point-pool weight, confidence, tier, or score."
+    },
+    "issues": { "type": "array", "items": { "type": "string" } }
+  }
+}

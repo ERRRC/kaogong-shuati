@@ -1,0 +1,46 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, viewport-fit=cover">
+<meta name="theme-color" content="#8b5cf6">
+<title>没钱考什么公 · 行测/申论/事业编</title>
+<link rel="stylesheet" href="style.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><rect width='100' height='100' rx='24' fill='%238b5cf6'/><text x='50' y='68' font-size='52' text-anchor='middle'>✍️</text></svg>">
+<script>
+  // 主题初始化（防闪烁）：localStorage > 系统
+  (function () {
+    var t = localStorage.getItem('theme');
+    if (t === 'dark' || t === 'light') document.documentElement.setAttribute('data-theme', t);
+  })();
+</script>
+</head>
+<body>
+<div id="app">
+  <header id="topbar">
+    <button id="btn-back" class="icon-btn spacer" aria-label="返回">←</button>
+    <h1 id="app-title">没钱考什么公</h1>
+    <div id="topbar-right">
+      <button id="btn-theme" class="icon-btn" aria-label="切换深浅色"><svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8Z"/></svg></button>
+    </div>
+  </header>
+
+  <main id="view">
+    <!-- 视图由 JS 渲染 -->
+  </main>
+
+  <nav id="bottom-nav" style="display:none">
+    <button data-nav="home" class="nav-item active"><span class="nav-ico"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 10.5 12 3l9 7.5"/><path d="M5 9.5V21h14V9.5"/><path d="M9.5 21v-6h5v6"/></svg></span>首页</button>
+    <button data-nav="practice" class="nav-item"><span class="nav-ico"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17 3a2.8 2.8 0 0 1 4 4L7.5 20.5 2 22l1.5-5.5Z"/></svg></span>刷题</button>
+    <button data-nav="papers" class="nav-item"><span class="nav-ico"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8Z"/><path d="M14 2v6h6"/><path d="M8 13h8M8 17h5"/></svg></span>试卷</button>
+    <button data-nav="wrong" class="nav-item"><span class="nav-ico"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20V2H6.5A2.5 2.5 0 0 0 4 4.5Z"/><path d="M4 19.5A2.5 2.5 0 0 0 6.5 22H20v-5"/><path d="M9 7h7M9 11h5"/></svg></span>错题</button>
+    <button data-nav="ai" class="nav-item"><span class="nav-ico"><svg viewBox="0 0 24 24" width="21" height="21" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="8" width="16" height="12" rx="3"/><path d="M12 4v4M9 2v4M15 2v4"/><path d="M8 13h.01M12 13h.01M16 13h.01M10 17h4"/></svg></span>AI</button>
+  </nav>
+</div>
+
+<div id="toast" class="toast"></div>
+<script src="crop-math.js"></script>
+<script src="local-bootstrap.js"></script>
+<script src="app.js"></script>
+</body>
+</html>

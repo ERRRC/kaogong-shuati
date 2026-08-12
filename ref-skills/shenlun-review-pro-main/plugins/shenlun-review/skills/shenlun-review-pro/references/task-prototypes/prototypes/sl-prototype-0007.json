@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0007",
+  "name": "词句理解",
+  "question_type": "综合分析",
+  "trigger_signals": ["谈谈理解", "谈谈*理解", "解释含义", "如何理解", "怎样理解", "为什么说", "为什么*过程", "又是从哪些方面体现"],
+  "exclusion_signals": ["争议焦点", "分析原因"],
+  "required_task_elements": ["待理解词句", "材料来源范围"],
+  "optional_task_elements": ["语境要求"],
+  "default_format_reference": "先解释词句本义，再结合材料阐释深层含义",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构"],
+  "recommended_card_ids": ["sl-card-0026", "sl-card-0030"],
+  "mode_routes": {
+    "审题": ["sl-card-0026"],
+    "解析": ["sl-card-0026", "sl-card-0030"],
+    "批改": ["sl-card-0056"],
+    "修改二稿": []
+  },
+  "fallback_behavior": "未命中原型时回退到综合分析通用路由",
+  "constraints": ["必须结合材料语境", "不得脱离材料空泛解释"],
+  "evidence_refs": ["national-exam-2021-sub-provincial-q1", "national-exam-2021-municipal-q2"]
+}

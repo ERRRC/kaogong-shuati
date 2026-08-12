@@ -1,0 +1,48 @@
+# ===== 依赖 =====
+node_modules/
+
+# ===== 生成产物（可从源码重建）=====
+out/
+app/android/**/build/
+app/android/.gradle/
+app/android/app/.cxx/
+app/android/local.properties
+app/android/app/src/main/assets/
+*.apk
+*.aab
+/*.png
+/*.jpg
+/*.jpeg
+/*.gif
+*.pdf
+
+# ===== 浏览器测试 / 临时目录 =====
+.chrome*/
+.edge*/
+tmp-*
+
+# ===== 日志与旧备份 =====
+*.log
+crawl-log-*.txt
+*.bak*
+_auth-rollback-backup/
+
+# ===== 数据文件（体积大或可从爬虫重建，不进 git）=====
+*.db
+*.db-wal
+*.db-shm
+*.db.gz
+*.db.jar
+*.sqlite
+app-assets/
+backup/
+粉笔/
+
+# ===== 敏感文件（切勿提交！）=====
+cookie*.txt
+keystore-pass.txt
+ai-config.db
+*.key
+*.jks
+*.p12
+*.keystore

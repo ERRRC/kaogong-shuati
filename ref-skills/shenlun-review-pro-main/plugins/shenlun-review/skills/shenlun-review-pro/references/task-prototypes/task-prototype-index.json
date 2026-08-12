@@ -1,0 +1,200 @@
+{
+  "schema_version": "1.0",
+  "total_prototypes": 26,
+  "prototypes": [
+    {
+      "prototype_id": "sl-prototype-0001",
+      "name": "做法概括",
+      "question_type": "归纳概括",
+      "path": "prototypes/sl-prototype-0001.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0002",
+      "name": "变化概括",
+      "question_type": "归纳概括",
+      "path": "prototypes/sl-prototype-0002.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0003",
+      "name": "分类总结",
+      "question_type": "归纳概括",
+      "path": "prototypes/sl-prototype-0003.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0004",
+      "name": "问题梳理",
+      "question_type": "归纳概括",
+      "path": "prototypes/sl-prototype-0004.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0005",
+      "name": "争议焦点",
+      "question_type": "综合分析",
+      "path": "prototypes/sl-prototype-0005.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0006",
+      "name": "多概念阐释",
+      "question_type": "综合分析",
+      "path": "prototypes/sl-prototype-0006.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0007",
+      "name": "词句理解",
+      "question_type": "综合分析",
+      "path": "prototypes/sl-prototype-0007.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0008",
+      "name": "原因+对策",
+      "question_type": "提出对策",
+      "path": "prototypes/sl-prototype-0008.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0009",
+      "name": "问题+建议复合",
+      "question_type": "提出对策",
+      "path": "prototypes/sl-prototype-0009.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0010",
+      "name": "汇报总结类（含情况简报）",
+      "question_type": "贯彻执行",
+      "path": "prototypes/sl-prototype-0010.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0011",
+      "name": "短评",
+      "question_type": "贯彻执行",
+      "path": "prototypes/sl-prototype-0011.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0012",
+      "name": "提案",
+      "question_type": "贯彻执行",
+      "path": "prototypes/sl-prototype-0012.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0013",
+      "name": "工作指南",
+      "question_type": "贯彻执行",
+      "path": "prototypes/sl-prototype-0013.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0014",
+      "name": "谈话提纲",
+      "question_type": "贯彻执行",
+      "path": "prototypes/sl-prototype-0014.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0015",
+      "name": "发言提纲",
+      "question_type": "贯彻执行",
+      "path": "prototypes/sl-prototype-0015.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0016",
+      "name": "案例短评",
+      "question_type": "贯彻执行",
+      "path": "prototypes/sl-prototype-0016.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0017",
+      "name": "多词关联立意",
+      "question_type": "申发论述",
+      "path": "prototypes/sl-prototype-0017.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0018",
+      "name": "辩证转化立意",
+      "question_type": "申发论述",
+      "path": "prototypes/sl-prototype-0018.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0019",
+      "name": "宣传介绍文稿",
+      "question_type": "贯彻执行",
+      "path": "prototypes/sl-prototype-0019.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0020",
+      "name": "沟通动员类",
+      "question_type": "贯彻执行",
+      "path": "prototypes/sl-prototype-0020.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0021",
+      "name": "方案指导类",
+      "question_type": "贯彻执行",
+      "path": "prototypes/sl-prototype-0021.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0022",
+      "name": "关系命题论证",
+      "question_type": "申发论述",
+      "path": "prototypes/sl-prototype-0022.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0023",
+      "name": "原因概括",
+      "question_type": "归纳概括",
+      "path": "prototypes/sl-prototype-0023.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0024",
+      "name": "亮点启示概括",
+      "question_type": "归纳概括",
+      "path": "prototypes/sl-prototype-0024.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0025",
+      "name": "评价看法分析",
+      "question_type": "综合分析",
+      "path": "prototypes/sl-prototype-0025.json"
+    },
+    {
+      "prototype_id": "sl-prototype-0026",
+      "name": "一般提出对策",
+      "question_type": "提出对策",
+      "path": "prototypes/sl-prototype-0026.json"
+    }
+  ],
+  "by_question_type": {
+    "归纳概括": [
+      "sl-prototype-0001",
+      "sl-prototype-0002",
+      "sl-prototype-0003",
+      "sl-prototype-0004",
+      "sl-prototype-0023",
+      "sl-prototype-0024"
+    ],
+    "综合分析": [
+      "sl-prototype-0005",
+      "sl-prototype-0006",
+      "sl-prototype-0007",
+      "sl-prototype-0025"
+    ],
+    "提出对策": [
+      "sl-prototype-0008",
+      "sl-prototype-0009",
+      "sl-prototype-0026"
+    ],
+    "贯彻执行": [
+      "sl-prototype-0010",
+      "sl-prototype-0011",
+      "sl-prototype-0012",
+      "sl-prototype-0013",
+      "sl-prototype-0014",
+      "sl-prototype-0015",
+      "sl-prototype-0016",
+      "sl-prototype-0019",
+      "sl-prototype-0020",
+      "sl-prototype-0021"
+    ],
+    "申发论述": [
+      "sl-prototype-0017",
+      "sl-prototype-0018",
+      "sl-prototype-0022"
+    ]
+  }
+}
