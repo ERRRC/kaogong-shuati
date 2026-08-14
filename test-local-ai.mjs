@@ -164,25 +164,24 @@ test('本地 AI：request 失败（断网）→ 可读错误', async () => {
   assert.ok(r.error && r.error.includes('网络请求失败'), `断网提示：${r.error}`);
 });
 
-test('本地 AI：ocr 分流（综应/申论→essay-ocr，行测→image-reader）', async () => {
+test('本地 AI：ocr 统一走合并后的识图转写员（image-reader）', async () => {
   const { createAiApi } = await import('./public/ai-local.js');
   const calls = [];
   const ai = await createAiApi({
     request: async (url, opts) => { calls.push(JSON.parse(opts.body).model); return { ok: true, status: 200, json: async () => ({ choices: [{ message: { content: 'OK' } }] }), text: async () => '' }; },
     tiku, query: null,
   });
-  // 给两个 OCR agent 配 key + base_url（默认无 key/base_url 会先报错，这里直接断言选中的 agent）
+  // 给 image-reader 配 key + base_url（默认无 key/base_url 会先报错，这里直接断言选中的 agent）
   await ai.updateAgent(4, { api_key: 'sk-img', base_url: 'https://api.deepseek.com/v1', enabled: 1 });
-  await ai.updateAgent(5, { api_key: 'sk-essay', base_url: 'https://api.deepseek.com/v1', enabled: 1 });
-  // 申论 → essay-ocr（model: mimo-v2.5-free）
+  // 申论 → image-reader（合并后统一走 image-reader）
   const r1 = await ai.ocr({ image: 'data:image/png;base64,aaa', subject: '公务员·申论' });
-  assert.ok(calls[calls.length - 1] === 'mimo-v2.5-free' || r1.content, `申论走 essay-ocr：${JSON.stringify(r1)}`);
-  // 综应 → essay-ocr
+  assert.ok(calls[calls.length - 1] === 'GLM-4.1V-Thinking-Flash' || r1.content, `申论走 image-reader：${JSON.stringify(r1)}`);
+  // 综应 → image-reader
   await ai.ocr({ image: 'data:image/png;base64,aaa', subject: '事业编·综应' });
-  assert.equal(calls[calls.length - 1], 'mimo-v2.5-free', '综应走 essay-ocr');
-  // 行测 → image-reader（model: mimo-v2.5）
+  assert.equal(calls[calls.length - 1], 'GLM-4.1V-Thinking-Flash', '综应走 image-reader');
+  // 行测 → image-reader
   await ai.ocr({ image: 'data:image/png;base64,aaa', subject: '公务员·行测' });
-  assert.equal(calls[calls.length - 1], 'mimo-v2.5', '行测走 image-reader');
+  assert.equal(calls[calls.length - 1], 'GLM-4.1V-Thinking-Flash', '行测走 image-reader');
 });
 
 test('本地 AI：clearExplainCache 不抛错（返回 {cleared}）', async () => {

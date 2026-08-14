@@ -166,7 +166,7 @@ questions  题目：questionId / paperId / chapter / type / content / options(JS
 
 ## AI 智能体配置系统（ai-config.db）
 
-五个 AI 角色（行测解析 / 申论批改 / 学习进度顾问 / 识图转写员 / 综应申论文字提取员）独立可配置，浏览器打开 `http://localhost:3000/?view=ai`（或底部导航 🤖 AI）管理：
+五个 AI 角色（行测解析 / 申论批改 / 学习进度顾问 / 识图转写员 / 题目解析员）独立可配置，浏览器打开 `http://localhost:3000/?view=ai`（或底部导航 🤖 AI）管理：
 
 - **prompt / skill**：随时改，保存立即生效（热更新），变更自动存版本历史可回滚
 - **API Key / URL**：每个 AI 独立 base_url + api_key + model，OpenAI 兼容协议（DeepSeek/通义/GLM/OpenAI/本地 Ollama 都行）
@@ -177,7 +177,7 @@ questions  题目：questionId / paperId / chapter / type / content / options(JS
 - **含图题识图管线**：图形推理/图表题自动走「视觉模型识图转写 → deepseek 解析」两段式——先由多模态 AI 把图片转成文字描述，再喂给行测解析 AI，无需人工看题即可出解析；识图转写内容可展开查看。当前识图模型 **GLM-4V-Flash**（智谱，免费稳定），含 429 限流自动重试（3 次退避）与 max_tokens 自适应降级（部分模型上限仅 1024）；GLM-4.6V-Flash 实测当前限流频繁，可在 AI 设置页切换
 - **性能优化**：推理模型默认带 `reasoning_effort=low`，抑制超长思维链（之前复杂题 40~90s + 输出被截断，现在 5~15s 稳定出解析）；不支持该参数的网关自动回退
 
-五个 AI 角色（行测解析 / 申论批改 / 学习进度顾问 / 识图转写员 / 综应申论文字提取员）独立可配置；识图转写员与综应申论文字提取员为多模态（mimo-v2.5-free），key/url 可单独覆盖。**注意**：AI 设置页的 API Key 输入框为脱敏占位，空值保存不会覆盖已配置的 key（2026-08 修复）。
+五个 AI 角色（行测解析 / 申论批改 / 学习进度顾问 / 识图转写员 / 题目解析员）独立可配置；识图转写员为多模态（GLM-4.1V-Thinking-Flash），已并入原“综应申论文字提取员”的手写作答转写职责，key/url 可单独覆盖。**注意**：AI 设置页的 API Key 输入框为脱敏占位，空值保存不会覆盖已配置的 key（2026-08 修复）。
 
 ## 做题记录（服务端落库）
 

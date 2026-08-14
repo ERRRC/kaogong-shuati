@@ -119,7 +119,7 @@ const json = (res, code, data) => {
 };
 const err = (res, code, msg) => json(res, code, { error: msg });
 
-/** 多模态识图调用（OpenAI 兼容 image_url 格式，用于 GLM-4.6V-Flash / MiMo-V2.5 等视觉模型）
+/** 多模态识图调用（OpenAI 兼容 image_url 格式，用于 GLM-4.1V-Thinking-Flash / GLM-4V-Flash 等视觉模型）
  *  含 429 限流自动重试（免费视觉模型常见访问量过大）
  *  mode='ocr' 时提示词为作答文字转写，否则为图形/图表转写 */
 async function callVision(apiKey, baseUrl, model, imgs, mode = 'describe') {
@@ -1694,7 +1694,7 @@ const server = http.createServer(async (req, res) => {
           if (om) imgUrls.push(normImgUrl(om[1]));
         }
         const hasImage = imgUrls.length > 0 || materialImgUrls.length > 0;
-        // 含图题：先调「识图转写员」（默认 MiMo-V2.5 多模态）把图片转成文字
+        // 含图题：先调「识图转写员」（多模态视觉模型，如 GLM-4.1V-Thinking-Flash）把图片转成文字
         let imageNote = '';
         if (hasImage) {
           const downloads = await Promise.all(imgUrls.slice(0, 4).map(async (u) => {
@@ -1731,7 +1731,7 @@ const server = http.createServer(async (req, res) => {
           const imgs = [...downloads, ...matDownloads].filter(Boolean);
           if (imgs.length) {
             const imgAgent = getAgent('image-reader');
-            const model = (imgAgent && imgAgent.model) || 'mimo-v2.5';
+            const model = (imgAgent && imgAgent.model) || 'glm-4v-flash';
             const key = (imgAgent && imgAgent.api_key) || agent.api_key;
             const baseUrl = (imgAgent && imgAgent.base_url) || agent.base_url;
             const v = await callVision(key, baseUrl, model, imgs);
@@ -1787,9 +1787,8 @@ const server = http.createServer(async (req, res) => {
         if (!m) return err(res, 400, '图片格式不正确');
         const buf = Buffer.from(m[2], 'base64');
         if (buf.length > 8 * 1024 * 1024) return err(res, 400, '图片过大（≤8MB）');
-        // 手写作答 OCR 分流：综应/申论 → 专职文字提取员(essay-ocr)；其余(职测/行测题目图) → 识图转写员(image-reader)
-        const ocrRole = (subject && /申论|综应/.test(subject)) ? 'essay-ocr' : 'image-reader';
-        const imgAgent = getAgent(ocrRole);
+        // 2026-08-15：识图统一走合并后的「识图转写员」（image-reader），申论/综应手写作答与行测图形图表同用一模型
+        const imgAgent = getAgent('image-reader');
         const agent = getAgent('xingce-explainer') || {};
         const model = (imgAgent && imgAgent.model) || 'glm-4v-flash';
         const key = (imgAgent && imgAgent.api_key) || agent.api_key;

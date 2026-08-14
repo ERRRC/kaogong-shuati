@@ -324,7 +324,8 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
     defaults = [
       { id: 1, name: '行测解析 AI', role: 'xingce-explainer', description: '行测/职测选择题解析', system_prompt: '你是一名资深公务员考试行测讲师。请解析用户发来的行测选择题：给出考点、正确项解析、错误项排除、解题技巧。', skill: 'gongkao-huasheng13', base_url: 'https://opencode.ai/zen/v1', api_key: '', model: 'deepseek-v4-flash-free', temperature: 0.3, max_tokens: 4000, enabled: 0 },
       { id: 2, name: '申论批改 AI', role: 'shenlun-grader', description: '申论/综应主观题批改', system_prompt: '你是一名申论阅卷官。请对用户的作答按要点采分制评分（满分100），给出评分、参考答案要点、丢分原因、改进建议。', skill: 'shenlun-master', base_url: 'https://opencode.ai/zen/v1', api_key: '', model: 'deepseek-v4-flash-free', temperature: 0.4, max_tokens: 2000, enabled: 0 },
-      { id: 4, name: '识图转写员', role: 'image-reader', description: '图形/图表图片转写', system_prompt: '你是一名图像识别助手。请把图片内容完整准确地转写成文字。', skill: '', base_url: '', api_key: '', model: 'mimo-v2.5', temperature: 0.1, max_tokens: 2000, enabled: 0 },
+      { id: 4, name: '识图转写员', role: 'image-reader', description: '多模态识图：图形/图表/公式图 + 申论综应手写作答图转写', system_prompt: '你是一名图像识别转写助手。请把图片内容完整准确地转写成文字：图形描述形状数量位置旋转颜色规律，图表描述行列标题数据坐标轴图例趋势，公式文字图完整抄录，手写作答逐字转写保留格式不修正错别字（辨识不清用【？】标注）。只输出转写文本。', skill: '', base_url: '', api_key: '', model: 'GLM-4.1V-Thinking-Flash', temperature: 0.1, max_tokens: 2000, enabled: 0 },
+      { id: 6, name: '题目解析员', role: 'custom-question-parser', description: '自定义题库导入：题目文本结构化 JSON', system_prompt: '你是一名题目结构化解析助手。请把题目原始文本拆分为 JSON：{"questions":[{"prompt":"题干","material":"材料","options":["选项1","选项2"],"answer":"答案","analysis":"解析"}]}。忠实原文，不编造，没有的字段留空，只输出 JSON。', skill: '', base_url: '', api_key: '', model: 'GLM-4.1V-Thinking-Flash', temperature: 0.1, max_tokens: 4000, enabled: 0 },
     ];
   }
 
@@ -416,7 +417,7 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
         } catch {}
       }
       // 含图题图片转写（与 server.mjs 同构）：图形推理/图表题的规律与数字在图片里，
-      // deepseek 为纯文本模型收不到图 → 先调「识图转写员」（mimo 多模态）把题干+选项+材料图转成文字描述
+      // deepseek 为纯文本模型收不到图 → 先调「识图转写员」（GLM 多模态）把题干+选项+材料图转成文字描述
       let imageNote = '';
       try {
         const normImgUrl = (u) => (/^\/\//.test(u) ? 'https:' + u : u);
@@ -468,7 +469,7 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
           const imgs = downloads.filter(Boolean);
           console.warn('[explain-img] 图数=' + all.length + ' 下载成功=' + imgs.length);
           if (imgs.length) {
-            const imgAgent = loadAgents(defaults).find((x) => x.role === 'image-reader') || loadAgents(defaults)[3];
+            const imgAgent = loadAgents(defaults).find((x) => x.role === 'image-reader');
             if (imgAgent && imgAgent.api_key && imgAgent.base_url) {
               console.warn('[explain-img] 转写 agent: ' + imgAgent.model + ' @ ' + imgAgent.base_url);
               const v = await callVisionLocal(imgAgent, imgs, 'describe', request);
@@ -492,12 +493,12 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
       return r;
     },
 
-    /** POST /api/ai/ocr — 识图转写（image 为 dataURL）；与 server 同构：综应/申论手写作答 → essay-ocr，其余 → image-reader；
+    /** POST /api/ai/ocr — 识图转写（image 为 dataURL）；与 server 同构：
+     *  统一走合并后的「识图转写员」（image-reader），申论/综应手写作答与行测图形图表同用一模型；
      *  图片以多模态格式（image_url）真实发送给视觉模型 */
     async ocr({ image, subject }) {
-      const ocrRole = (subject && /申论|综应/.test(subject)) ? 'essay-ocr' : 'image-reader';
-      const agent = loadAgents(defaults).find((x) => x.role === ocrRole);
-      if (!agent) return { error: `${ocrRole === 'essay-ocr' ? '综应申论文字提取员' : '识图转写员'}未启用，请到 AI 设置页配置` };
+      const agent = loadAgents(defaults).find((x) => x.role === 'image-reader');
+      if (!agent) return { error: '识图转写员未启用，请到 AI 设置页配置' };
       if (!image || !String(image).startsWith('data:image')) return { error: '缺少图片（data URL）' };
       return callVisionLocal(agent, String(image), 'ocr', request);
     },

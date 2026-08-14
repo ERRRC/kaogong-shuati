@@ -10,7 +10,7 @@
 
 核心需求（用户确认）：
 - 主界面（首页科目卡区）显示"自定义题库"入口，下方是小分支卡片（每个 = 一个批次）
-- 通过文件导入题目：**PDF、Excel 为主，其他格式（TXT/Word）也支持**；PDF 扫描版识别走 AI 设置里的「识图转写员」（role=image-reader，GLM-4.1V-Thinking-Flash，智谱）
+- 通过文件导入题目：**PDF、Excel 为主，其他格式（TXT/Word）也支持**；PDF 扫描版页转图后走统一的多模态识图 AI（详见 §10 AI 智能体调整）
 - 软件自动判断并分类每道题的五个字段：**提示（=题干）、材料、选项、答案、解析**
 - 无解析显示"无解析"，无答案显示"无答案"
 - 大分支（=批次，一次导入一个文件）可改名、合并、拆分（勾选题目拆出）
@@ -25,7 +25,7 @@
 ```
 文件选择(<input type="file">)
   → 前端解析（vendor 引入 SheetJS / pdf.js）
-  → 规则切分 + AI 兜底（现有 AI 网关；PDF 扫描版页转图后走「识图转写员」image-reader，GLM-4.1V-Thinking-Flash）
+  → 规则切分 + AI 兜底（现有 AI 网关；PDF 扫描版页转图后走合并后的「识图转写员」；自由文本结构化走新增「题目解析员」，详见 §10）
   → 结构化题目 JSON
   → Web 端: POST /api/custom/import → practice.db 新表
   → App 端: local-handler.js 镜像 → IndexedDB 新 objectStore
@@ -103,12 +103,19 @@ CREATE INDEX IF NOT EXISTS idx_cq_batch ON custom_questions(batch_id);
 | Excel 自由格式 | 规则切分（正则识别 `材料：` `A.` `B.` `C.` `D.` `答案：` `解析：`）→ 低置信 AI 兜底 |
 | TXT/Word(.docx 解包) | 同上规则切分 + AI 兜底 |
 | PDF 有文本层 | pdf.js 提取文本 → 规则切分 + AI 兜底 |
-| PDF 扫描版 | pdf.js 渲染每页为 canvas → 图片走「识图转写员」（role=image-reader，GLM-4.1V-Thinking-Flash，智谱 open.bigmodel.cn，现有 AI 网关 callVision）→ 文本 → 规则切分 |
+| PDF 扫描版 | pdf.js 渲染每页为 canvas → 图片走统一「识图转写员」（合并后 role=image-reader，见 §10）→ 文本 → 规则切分 |
 
-AI 兜底：新增智能体「题目解析员」（role=custom-question-parser，默认 model=GLM-4.1V-Thinking-Flash / 智谱 open.bigmodel.cn，与识图转写员同款底座，用户可在 AI 设置页增改），走现有 AI 网关（Web `/api/ai`，App `ai-local.js`），输入原始文本 → 输出 JSON
-`{prompt, material, options[], answer, analysis}`；解析失败/超时则该题标记为"待人工修正"仍可导入。
+AI 兜底（自由文本结构化）：走新增智能体「题目解析员」（role=custom-question-parser，默认 model=GLM-4.1V-Thinking-Flash / 智谱 open.bigmodel.cn，用户可在 AI 设置页增改），现有 AI 网关（Web `/api/ai`，App `ai-local.js`），输入原始文本（分批）→ 输出 JSON `{questions:[{prompt, material, options[], answer, analysis}]}`；解析失败/超时则该题标记为"待人工修正"仍可导入。
 
-**PDF 扫描版识别跟随的 AI 已明确：识图转写员（image-reader，GLM-4.1V-Thinking-Flash）**——PDF 每页渲染为图片后走 `callVision` 多模态接口（server.mjs 已有；`mimo-v2.5` 仅为代码兜底常量，实际模型取自 AI 设置页，当前配置为 GLM-4.1V-Thinking-Flash）。
+## 10. AI 智能体调整（用户拍板）
+
+**将「识图转写员」（image-reader）与「综应申论文字提取员」（essay-ocr）合并为一个统一的识图 AI，再新增「题目解析员」。**
+
+- 合并后 `essay-ocr` 角色删除；申论/综应手写作答图片与行测图形/图表/公式图一律走 `image-reader`（服务端与 App 的 ocrRole 分流逻辑一并删除，统一 `getAgent('image-reader')`）
+- `image-reader` 的 system_prompt 融合两种职责：图形/图表/公式转写（形状/数量/位置/旋转/组合/颜色/规律、表格行列数据、坐标轴图例趋势、完整抄录）+ 手写作答逐字转写（保留格式、不修正错别字、【？】/【无法辨认】标注）
+- 新增「题目解析员」role=`custom-question-parser`（id=6），默认 GLM-4.1V-Thinking-Flash / 智谱 open.bigmodel.cn，职责：原始题目文本 → 结构化 JSON（多题分批，见 §5）
+- AI 设置页智能体总数：4 → 4（删 1 增 1，净持平）；Web/App 默认配置三处同步：`lib/ai-agents.mjs`、`public/ai-agents.default.json`、`public/ai-local.js`
+- 兜底迁移：`initAiConfig` 若发现旧库存在 `essay-ocr` 行，将其 api_key 并入 `image-reader`（若后者无 key）后删除该行
 
 vendor 静态库（下载到 public/vendor/，服务端零依赖）：
 - `public/vendor/xlsx/xlsx.full.min.js`（SheetJS CE 0.20.x）
