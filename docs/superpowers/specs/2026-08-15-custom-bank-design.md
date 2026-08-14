@@ -93,6 +93,7 @@ CREATE INDEX IF NOT EXISTS idx_cq_batch ON custom_questions(batch_id);
 - 自定义题做题：走现有做题态（#view[data-exam]），答案点击判分/长按排除/暂停冻结/滑动切题全部自动生效（因为复用同一套 renderQuestion）
 - 题目详情编辑：弹层表单，字段 提示/材料/选项(A-D 输入框)/答案/解析，保存调编辑接口
 - 批次的"无解析/无答案"统计：SQL 聚合（Web）/ IndexedDB 游标统计（App）
+- 合并：勾选多个批次 → 弹窗输入新批次名（默认 "批次A+批次B"）；拆分：勾选题目 → 弹窗输入新批次名（默认 "原批次名-拆分N"）
 
 ## 5. 解析引擎（前端 custom-parser.js，规则优先 + AI 兜底）
 
