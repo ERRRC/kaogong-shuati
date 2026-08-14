@@ -56,6 +56,26 @@ pdb.exec(`
 `);
 // 兼容已存在的库：补充 archived 列
 try { pdb.exec('ALTER TABLE practice_records ADD COLUMN archived INTEGER DEFAULT 0'); } catch {}
+// ---- 自定义题库（2026-08-15）：批次 = 一次导入的文件；题目字段与粉笔 questions 同构 ----
+pdb.exec(`
+  CREATE TABLE IF NOT EXISTS custom_batches (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL,
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+  CREATE TABLE IF NOT EXISTS custom_questions (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER NOT NULL,
+    prompt TEXT NOT NULL,
+    material TEXT DEFAULT '',
+    options TEXT DEFAULT '[]',
+    answer TEXT DEFAULT '',
+    answer_index INTEGER DEFAULT -1,
+    analysis TEXT DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_cq_batch ON custom_questions(batch_id);
+`);
 // 申论材料缓存表（从真题 PDF OCR 提取）
 pdb.exec(`
   CREATE TABLE IF NOT EXISTS materials (
@@ -200,6 +220,13 @@ const MIME = {
 };
 
 /** 判分：选项索引 → 是否正确（与前端 judge 逻辑对齐） */
+// node:sqlite 无 transaction()，手工事务包装
+function withTx(fn) {
+  pdb.exec('BEGIN');
+  try { const r = fn(); pdb.exec('COMMIT'); return r; }
+  catch (e) { try { pdb.exec('ROLLBACK'); } catch {} throw e; }
+}
+
 function checkAnswer(q, selected) {
   const opts = JSON.parse(q.options || '[]');
   const sel = (Array.isArray(selected) ? selected : [selected]).map(Number);
@@ -1431,6 +1458,189 @@ const server = http.createServer(async (req, res) => {
         const q = qQuestionById.get(questionId);
         if (!q) return err(res, 404, '题目不存在');
         return json(res, 200, checkAnswer(q, selected));
+      }
+      // ---- 自定义题库（2026-08-15）：批次=一次导入的文件；题目字段与粉笔 questions 同构 ----
+      // 导入：建批次 + 批量插题（前端已解析成结构化字段）
+      if (pathname === '/api/custom/import' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { name, questions } = JSON.parse(body || '{}');
+        if (!name || !Array.isArray(questions) || questions.length === 0) return err(res, 400, '缺少批次名或题目');
+        const ins = pdb.prepare('INSERT INTO custom_questions (batch_id, prompt, material, options, answer, answer_index, analysis) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        let batchId;
+        withTx(() => {
+          const tb = pdb.prepare('INSERT INTO custom_batches (name) VALUES (?)').run(String(name).trim());
+          batchId = tb.lastInsertRowid;
+          for (const q of questions) {
+            ins.run(
+              batchId,
+              String(q.prompt ?? '').trim(),
+              String(q.material ?? ''),
+              JSON.stringify(Array.isArray(q.options) ? q.options : []),
+              String(q.answer ?? ''),
+              q.answer_index == null ? -1 : Number(q.answer_index),
+              String(q.analysis ?? ''),
+            );
+          }
+        });
+        return json(res, 200, { id: Number(batchId), name: String(name).trim(), count: questions.length });
+      }
+      // 批次列表（含题数）
+      if (pathname === '/api/custom/batches' && req.method === 'GET') {
+        const rows = pdb.prepare(`
+          SELECT b.id, b.name, b.created_at,
+                 (SELECT COUNT(*) FROM custom_questions c WHERE c.batch_id = b.id) AS count
+          FROM custom_batches b ORDER BY b.id DESC
+        `).all();
+        return json(res, 200, { batches: rows.map((r) => ({ ...r, count: Number(r.count) })) });
+      }
+      // 批次内题目列表
+      if (pathname === '/api/custom/questions' && req.method === 'GET') {
+        const batchId = Number(url.searchParams.get('batch_id') || 0);
+        if (!batchId) return err(res, 400, '缺少 batch_id');
+        const rows = pdb.prepare('SELECT id, batch_id, prompt, material, options, answer, answer_index, analysis FROM custom_questions WHERE batch_id = ? ORDER BY id ASC').all(batchId);
+        return json(res, 200, { questions: rows.map((r) => ({ ...r, options: JSON.parse(r.options || '[]') })) });
+      }
+      // 批改名
+      if (pathname === '/api/custom/batch' && req.method === 'PUT') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { id, name } = JSON.parse(body || '{}');
+        const nid = Number(id);
+        if (!nid || !String(name || '').trim()) return err(res, 400, '缺少 id 或批次名');
+        pdb.prepare("UPDATE custom_batches SET name = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(String(name).trim(), nid);
+        return json(res, 200, { ok: true });
+      }
+      // 合并批次：把选中的批次题目并入第一个（id 最小）批次，删其余批次
+      if (pathname === '/api/custom/batch/merge' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { ids, name } = JSON.parse(body || '{}');
+        const idList = (Array.isArray(ids) ? ids : []).map(Number).filter(Boolean);
+        if (idList.length < 2) return err(res, 400, '至少选择两个批次');
+        const target = Math.min(...idList);
+        const others = idList.filter((x) => x !== target);
+        withTx(() => {
+          for (const o of others) {
+            pdb.prepare('UPDATE custom_questions SET batch_id = ? WHERE batch_id = ?').run(target, o);
+          }
+          for (const o of others) {
+            pdb.prepare('DELETE FROM custom_batches WHERE id = ?').run(o);
+          }
+        });
+        if (name && String(name).trim()) {
+          pdb.prepare("UPDATE custom_batches SET name = ? WHERE id = ?").run(String(name).trim(), target);
+        }
+        const cnt = pdb.prepare('SELECT COUNT(*) n FROM custom_questions WHERE batch_id = ?').get(target).n;
+        return json(res, 200, { id: target, count: Number(cnt) });
+      }
+      // 拆分批次：勾选题目移入新批次
+      if (pathname === '/api/custom/batch/split' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { batch_id, question_ids, name } = JSON.parse(body || '{}');
+        const bid = Number(batch_id);
+        const qids = (Array.isArray(question_ids) ? question_ids : []).map(Number).filter(Boolean);
+        if (!bid || qids.length === 0) return err(res, 400, '缺少批次或题目');
+        const src = pdb.prepare('SELECT name FROM custom_batches WHERE id = ?').get(bid);
+        if (!src) return err(res, 404, '批次不存在');
+        const splitN = pdb.prepare("SELECT COUNT(*) n FROM custom_batches WHERE name LIKE ?").get(src.name + '-拆分%').n;
+        const newName = String(name || '').trim() || `${src.name}-拆分${splitN + 1}`;
+        const tb = pdb.prepare('INSERT INTO custom_batches (name) VALUES (?)').run(newName);
+        const nb = tb.lastInsertRowid;
+        withTx(() => {
+          for (const qid of qids) {
+            pdb.prepare('UPDATE custom_questions SET batch_id = ? WHERE id = ? AND batch_id = ?').run(nb, qid, bid);
+          }
+        });
+        const cnt = pdb.prepare('SELECT COUNT(*) n FROM custom_questions WHERE batch_id = ?').get(nb).n;
+        return json(res, 200, { id: Number(nb), name: newName, count: Number(cnt) });
+      }
+      // 删批次（级联删题）
+      if (pathname === '/api/custom/batch' && req.method === 'DELETE') {
+        const bid = Number(url.searchParams.get('id') || 0);
+        if (!bid) return err(res, 400, '缺少 id');
+        withTx(() => {
+          pdb.prepare('DELETE FROM custom_questions WHERE batch_id = ?').run(bid);
+          pdb.prepare('DELETE FROM custom_batches WHERE id = ?').run(bid);
+        });
+        return json(res, 200, { ok: true });
+      }
+      // 改单题
+      if (pathname === '/api/custom/question' && req.method === 'PUT') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { id, prompt, material, options, answer, answer_index, analysis } = JSON.parse(body || '{}');
+        const qid = Number(id);
+        if (!qid) return err(res, 400, '缺少 id');
+        pdb.prepare(`
+          UPDATE custom_questions SET prompt = ?, material = ?, options = ?, answer = ?, answer_index = ?, analysis = ?
+          WHERE id = ?
+        `).run(
+          String(prompt ?? '').trim(),
+          String(material ?? ''),
+          JSON.stringify(Array.isArray(options) ? options : []),
+          String(answer ?? ''),
+          answer_index == null ? -1 : Number(answer_index),
+          String(analysis ?? ''),
+          qid,
+        );
+        return json(res, 200, { ok: true });
+      }
+      // 删单题
+      if (pathname === '/api/custom/question' && req.method === 'DELETE') {
+        const qid = Number(url.searchParams.get('id') || 0);
+        if (!qid) return err(res, 400, '缺少 id');
+        pdb.prepare('DELETE FROM custom_questions WHERE id = ?').run(qid);
+        return json(res, 200, { ok: true });
+      }
+      // 出题（刷题）：字段映射成粉笔 questions 结构，直接喂 enterQuiz
+      if (pathname === '/api/custom/practice' && req.method === 'GET') {
+        const bid = Number(url.searchParams.get('batch_id') || 0);
+        if (!bid) return err(res, 400, '缺少 batch_id');
+        const b = pdb.prepare('SELECT id, name FROM custom_batches WHERE id = ?').get(bid);
+        if (!b) return err(res, 404, '批次不存在');
+        const rows = pdb.prepare('SELECT * FROM custom_questions WHERE batch_id = ? ORDER BY id ASC').all(bid);
+        const questions = rows.map((r) => ({
+          questionId: `custom-${r.id}`,
+          content: r.prompt,
+          material: r.material || '',
+          options: r.options,
+          answer: r.answer || '',
+          answerIndex: r.answer_index == null ? -1 : Number(r.answer_index),
+          analysis: r.analysis || '',
+          type: 'custom',
+          subjectName: '自定义',
+          batchId: bid,
+          chapter: b.name,
+        }));
+        return json(res, 200, { questions, batch: { id: bid, name: b.name } });
+      }
+      // 判分：复用 checkAnswer，写 practice_records（subject='自定义'，chapter=批次名）
+      if (pathname === '/api/custom/check' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { questionId, selected, batchId, chapter } = JSON.parse(body || '{}');
+        const cid = Number(String(questionId || '').replace(/^custom-/, ''));
+        if (!cid) return err(res, 400, '缺少 questionId');
+        const q = pdb.prepare('SELECT * FROM custom_questions WHERE id = ?').get(cid);
+        if (!q) return err(res, 404, '题目不存在');
+        const fq = {
+          content: q.prompt,
+          material: q.material || '',
+          options: q.options,
+          answer: q.answer || '',
+          answerIndex: q.answer_index == null ? -1 : Number(q.answer_index),
+          analysis: q.analysis || '',
+          type: 'custom',
+        };
+        const result = checkAnswer(fq, selected);
+        const ch = chapter || pdb.prepare('SELECT name FROM custom_batches WHERE id = ?').get(Number(batchId || 0))?.name || '';
+        pdb.prepare(`
+          INSERT INTO practice_records (question_id, paper_id, subject, chapter, question_type, selected, is_correct, cost_ms)
+          VALUES (?, NULL, '自定义', ?, 0, ?, ?, 0)
+        `).run(questionId, ch, JSON.stringify(selected ?? null), result.correct == null ? null : (result.correct ? 1 : 0));
+        return json(res, 200, result);
       }
       // ---- 做题记录（practice.db，服务端跨设备同步） ----
       // 提交一条做题记录（前端判分后自动上报）
