@@ -340,6 +340,8 @@ function goBack() {
   else if (top.name === 'practice') renderPractice(top.subject, top.chapter || null, null, top.mock ?? '0', true);
   else if (top.name === 'wrong') renderWrong();
   else if (top.name === 'fav') renderFavorites();
+  else if (top.name === 'custom-bank') renderCustomBank(true);
+  else if (top.name === 'custom-batch') renderCustomBatch(top.batchId, true);
   else renderHome();
 }
 
@@ -482,6 +484,19 @@ async function renderHome() {
 
     // 题库网格（试卷封面卡）
     const grid = el('div', 'subject-grid');
+    // 自定义题库入口卡（2026-08-15：文件导入 → 批次 → 刷题）
+    const customCard = el('div', 'subject-card custom-entry', `
+      <span class="emoji tint-cyan"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></span>
+      <div class="name">自定义题库</div>
+      <div class="desc">导入 PDF / Excel / Word / TXT 题目，自由刷题</div>
+      <div class="stat-line"><span id="custom-batch-count">加载中…</span></div>
+    `);
+    customCard.onclick = () => renderCustomBank();
+    grid.appendChild(customCard);
+    api('/api/custom/batches').then((d) => {
+      const el0 = $('#custom-batch-count');
+      if (el0) el0.innerHTML = d.batches.length ? `<b>${d.batches.length}</b> 个批次 · <b>${d.batches.reduce((s, b) => s + b.count, 0)}</b> 题` : '暂无批次，点击导入';
+    }).catch(() => { const el0 = $('#custom-batch-count'); if (el0) el0.textContent = '点击导入'; });
     const SUBJECT_TINTS = {
       '公务员·行测': 'tint-orange',
       '公务员·申论': 'tint-green',
@@ -533,6 +548,465 @@ async function renderHome() {
   } catch (e) {
     view.innerHTML = `<div class="empty">加载失败：${e.message}</div>`;
   }
+}
+
+// ================= 自定义题库（2026-08-15：文件导入 → 批次管理 → 刷题判分） =================
+let customMergeMode = false;   // 合并模式（批次页勾选）
+let customSplitMode = false;   // 拆分模式（批次内勾选题目）
+const customSel = new Set();   // 勾选集合（合并=批次id，拆分=题目id）
+
+function customSheet(html, wide) {
+  const o = el('div', 'sheet-overlay');
+  o.innerHTML = `<div class="sheet${wide ? ' sheet-wide' : ''}">${html}</div>`;
+  document.body.appendChild(o);
+  o.addEventListener('click', (e) => { if (e.target === o) o.remove(); });
+  return o;
+}
+
+/** 批次列表页：导入 / 合并 / 刷新 / 批次卡（刷题·拆分·改名·删除） */
+async function renderCustomBank(skipNav) {
+  setView('custom-bank');
+  $('#app-title').textContent = '自定义题库';
+  if (!skipNav) store.navStack.push({ name: 'custom-bank' });
+  const view = $('#view');
+  view.innerHTML = '<div class="spinner"></div>';
+  try {
+    const { batches } = await api('/api/custom/batches');
+    view.innerHTML = '';
+    const head = el('div', 'custom-head', `
+      <button class="btn primary" id="cb-import">＋ 导入题目</button>
+      ${batches.length > 1 ? '<button class="btn" id="cb-merge">合并批次</button>' : ''}
+      <button class="btn" id="cb-refresh">刷新</button>
+    `);
+    view.appendChild(head);
+    $('#cb-import').onclick = renderImport;
+    const mb = $('#cb-merge');
+    if (mb) mb.onclick = () => { customMergeMode = true; customSel.clear(); renderCustomBank(true); };
+    $('#cb-refresh').onclick = () => { customMergeMode = false; renderCustomBank(true); };
+    if (customMergeMode) {
+      const bar = el('div', 'custom-toolbar', `
+        <div class="custom-hint">勾选要合并的批次（至少 2 个）→ 执行合并（题目并入最先勾选的批次，其余删除）</div>
+        <div class="custom-toolbar-btns">
+          <button class="btn primary" id="cb-do-merge" disabled>执行合并</button>
+          <button class="btn" id="cb-cancel-merge">取消</button>
+        </div>
+      `);
+      view.appendChild(bar);
+      $('#cb-cancel-merge').onclick = () => { customMergeMode = false; renderCustomBank(true); };
+      $('#cb-do-merge').onclick = async () => {
+        const ids = [...customSel].map(Number);
+        if (ids.length < 2) { toast('至少勾选两个批次'); return; }
+        try {
+          const r = await api('/api/custom/batch/merge', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+          toast(`合并完成：${r.count} 题`);
+          customMergeMode = false; customSel.clear();
+          renderCustomBank(true);
+        } catch (e) { toast('合并失败：' + e.message); }
+      };
+    }
+    if (batches.length === 0) {
+      view.appendChild(el('div', 'empty', '还没有批次。点「＋ 导入题目」上传 PDF / Excel / Word / TXT 开始。'));
+      return;
+    }
+    const list = el('div', 'custom-list');
+    for (const b of batches) {
+      const card = el('div', 'custom-batch', `
+        ${customMergeMode ? `<label class="cb-check-wrap"><input type="checkbox" class="cb-check" data-id="${b.id}"><span></span></label>` : ''}
+        <div class="cb-main" data-go="${b.id}">
+          <div class="cb-name">${esc(b.name)}</div>
+          <div class="cb-meta">${b.count} 题 · ${esc(b.created_at || '')}</div>
+        </div>
+        <div class="cb-actions">
+          <button class="mini primary" data-act="practice">刷题</button>
+          <button class="mini" data-act="split">拆分</button>
+          <button class="mini" data-act="rename">改名</button>
+          <button class="mini danger" data-act="del">删除</button>
+        </div>
+      `);
+      const check = card.querySelector('.cb-check');
+      if (check) {
+        check.onchange = () => {
+          if (check.checked) customSel.add(Number(check.dataset.id)); else customSel.delete(Number(check.dataset.id));
+          const btn = $('#cb-do-merge');
+          if (btn) btn.disabled = customSel.size < 2;
+        };
+      }
+      card.querySelector('[data-go]').onclick = () => renderCustomBatch(b.id);
+      card.querySelector('[data-act="practice"]').onclick = (e) => { e.stopPropagation(); customPractice(b.id, b.name); };
+      card.querySelector('[data-act="split"]').onclick = (e) => { e.stopPropagation(); customSplitMode = true; customSel.clear(); renderCustomBatch(b.id, true); };
+      card.querySelector('[data-act="rename"]').onclick = (e) => { e.stopPropagation(); customRenameBatch(b); };
+      card.querySelector('[data-act="del"]').onclick = (e) => { e.stopPropagation(); customDeleteBatch(b); };
+      list.appendChild(card);
+    }
+    view.appendChild(list);
+  } catch (e) {
+    view.innerHTML = `<div class="empty">加载失败：${e.message}</div>`;
+  }
+}
+
+/** 批次内题目列表：刷题 / 拆分勾选 / 单题编辑删除 */
+async function renderCustomBatch(id, skipNav) {
+  setView('custom-batch');
+  $('#app-title').textContent = '批次题目';
+  if (!skipNav) store.navStack.push({ name: 'custom-batch', batchId: id });
+  const view = $('#view');
+  view.innerHTML = '<div class="spinner"></div>';
+  try {
+    const [{ batches }, { questions }] = await Promise.all([
+      api('/api/custom/batches'),
+      api('/api/custom/questions?batch_id=' + id),
+    ]);
+    const batch = batches.find((b) => b.id === id) || { id, name: '批次' };
+    view.innerHTML = '';
+    const head = el('div', 'custom-head', `
+      <div class="cb-title-row">
+        <div class="cb-name big">${esc(batch.name)} <span class="cb-meta">${questions.length} 题</span></div>
+      </div>
+      <div class="custom-toolbar-btns">
+        <button class="btn primary" id="cbq-practice">开始刷题</button>
+        ${questions.length > 1 ? '<button class="btn" id="cbq-split">拆分勾选题目</button>' : ''}
+      </div>
+    `);
+    view.appendChild(head);
+    $('#cbq-practice').onclick = () => customPractice(batch.id, batch.name);
+    const splitBtn = $('#cbq-split');
+    if (splitBtn) splitBtn.onclick = () => { customSplitMode = true; customSel.clear(); renderCustomBatch(id, true); };
+    if (customSplitMode) {
+      const bar = el('div', 'custom-toolbar', `
+        <div class="custom-hint">勾选要拆出的题目 → 拆分为新批次（其余留在原批次）</div>
+        <div class="custom-toolbar-btns">
+          <button class="btn primary" id="cbq-do-split" disabled>拆出为新批次</button>
+          <button class="btn" id="cbq-cancel-split">取消</button>
+        </div>
+      `);
+      view.appendChild(bar);
+      $('#cbq-cancel-split').onclick = () => { customSplitMode = false; renderCustomBatch(id, true); };
+      $('#cbq-do-split').onclick = async () => {
+        const qids = [...customSel].map(Number);
+        if (!qids.length) { toast('请先勾选题目'); return; }
+        const sheet = customSheet(`
+          <h3>拆分为新批次</h3>
+          <label>新批次名称</label>
+          <input type="text" id="split-name" value="${esc(batch.name)}-拆分1" placeholder="${esc(batch.name)}-拆分N">
+          <div class="sheet-actions">
+            <button class="btn primary" id="split-ok">确认拆分</button>
+            <button class="btn" id="split-cancel">取消</button>
+          </div>
+        `);
+        $('#split-cancel').onclick = () => sheet.remove();
+        $('#split-ok').onclick = async () => {
+          const nm = $('#split-name').value.trim();
+          try {
+            const r = await api('/api/custom/batch/split', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ batch_id: id, question_ids: qids, name: nm || undefined }) });
+            sheet.remove();
+            toast(`已拆出「${r.name}」${r.count} 题`);
+            customSplitMode = false; customSel.clear();
+            renderCustomBatch(id, true);
+          } catch (e) { toast('拆分失败：' + e.message); }
+        };
+      };
+    }
+    if (questions.length === 0) {
+      view.appendChild(el('div', 'empty', '该批次暂无题目。'));
+      return;
+    }
+    const list = el('div', 'custom-qlist');
+    questions.forEach((q, i) => {
+      const row = el('div', 'custom-q', `
+        ${customSplitMode ? `<label class="cb-check-wrap"><input type="checkbox" class="cq-check" data-id="${q.id}"><span></span></label>` : ''}
+        <div class="cq-body">
+          <div class="cq-no">${i + 1}</div>
+          <div class="cq-main">
+            <div class="cq-prompt">${esc((q.prompt || '（空题干）').slice(0, 80))}</div>
+            <div class="cq-meta">
+              ${q.material ? '<span class="tag">材料</span>' : ''}
+              <span class="tag">${q.options.length ? q.options.length + ' 选项' : '无选项'}</span>
+              <span class="tag ${q.answer ? 'ok' : ''}">${q.answer ? '答案 ' + customAnswerDisplay(q.answer, q.options) : '无答案'}</span>
+              <span class="tag ${q.analysis ? 'ok' : ''}">${q.analysis ? '有解析' : '无解析'}</span>
+            </div>
+          </div>
+        </div>
+        <div class="cq-actions">
+          <button class="mini" data-a="edit">编辑</button>
+          <button class="mini danger" data-a="del">删除</button>
+        </div>
+      `);
+      const check = row.querySelector('.cq-check');
+      if (check) check.onchange = () => { if (check.checked) customSel.add(Number(check.dataset.id)); else customSel.delete(Number(check.dataset.id)); const b = $('#cbq-do-split'); if (b) b.disabled = customSel.size === 0; };
+      row.querySelector('[data-a="edit"]').onclick = () => customEditQuestion(q, batch.name);
+      row.querySelector('[data-a="del"]').onclick = () => customDeleteQuestion(q);
+      list.appendChild(row);
+    });
+    view.appendChild(list);
+  } catch (e) {
+    view.innerHTML = `<div class="empty">加载失败：${e.message}</div>`;
+  }
+}
+
+/** 答案显示：JSON 索引数组 → 字母 */
+function customAnswerDisplay(answer, options) {
+  if (/^\[/.test(answer)) {
+    try { return JSON.parse(answer).map((i) => String.fromCharCode(65 + i)).join(''); } catch { return answer; }
+  }
+  return answer;
+}
+
+/** 刷题：复用做题流程（subject='自定义'，chapter=批次名） */
+async function customPractice(batchId, name) {
+  try {
+    const r = await api('/api/custom/practice?batch_id=' + batchId);
+    if (!r.questions || r.questions.length === 0) { toast('该批次暂无题目'); return; }
+    enterQuiz(r.questions, '自定义', 'custom', null, null, null);
+  } catch (e) { toast('加载失败：' + e.message); }
+}
+
+/** 导入页：文件选择 → 解析 → 预览 → 确认导入 */
+async function renderImport() {
+  setView('custom-import');
+  $('#app-title').textContent = '导入题目';
+  store.navStack.push({ name: 'custom-import' });
+  const view = $('#view');
+  view.innerHTML = `
+    <div class="card">
+      <h3>选择文件（可多选）</h3>
+      <p class="muted">支持 PDF（扫描版自动识图）、Excel（.xlsx/.xls，固定列或自由格式）、Word（.docx）、TXT。一次导入 = 一个批次。</p>
+      <input type="file" id="import-file" accept=".pdf,.xlsx,.xls,.txt,.docx" multiple>
+      <div id="import-progress" class="import-progress"></div>
+    </div>
+    <div id="import-preview"></div>
+  `;
+  $('#import-file').onchange = async () => {
+    const files = [...$('#import-file').files];
+    if (!files.length) return;
+    const progress = $('#import-progress');
+    progress.innerHTML = '<div class="spinner"></div><div class="muted">解析中（扫描版 PDF 需逐页识图，约 5~20 秒/页）…</div>';
+    const all = [];
+    for (let i = 0; i < files.length; i++) {
+      progress.innerHTML = `<div class="muted">解析 ${files[i].name}（${i + 1}/${files.length}）…</div>`;
+      try {
+        const qs = await customParseFile(files[i]);
+        all.push(...qs);
+      } catch (e) {
+        all.push({ prompt: `【解析失败】${files[i].name}：${e.message}`, material: '', options: [], answer: '', answer_index: -1, analysis: '', failed: true });
+      }
+    }
+    progress.innerHTML = '';
+    customRenderPreview(all, files.map((f) => f.name.replace(/\.[^.]+$/, '')).join('+') || '未命名批次');
+  };
+}
+
+async function customParseFile(file) {
+  const ext = (file.name.split('.').pop() || '').toLowerCase();
+  const P = () => import('./lib/custom-parser.js');
+  if (ext === 'txt') { const { parseTxt } = await P(); return parseTxt(await file.text()); }
+  if (ext === 'docx') { const { docxToText, parseTxt } = await P(); return parseTxt(await docxToText(file)); }
+  if (ext === 'doc') throw new Error('旧版 .doc 请用 Word 另存为 .docx 或 TXT 后再导入');
+  if (ext === 'xlsx' || ext === 'xls') {
+    const { parseExcel, aiStructure } = await P();
+    const XLSX = window.XLSX;
+    if (!XLSX) throw new Error('Excel 解析库未加载，请刷新页面重试');
+    const wb = XLSX.read(await file.arrayBuffer());
+    const ws = wb.Sheets[wb.SheetNames[0]];
+    const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
+    const r = parseExcel(rows);
+    if (r.questions.length && r.questions.some((q) => q.prompt)) return r.questions;
+    if (r.freeText && r.freeText.trim().length > 20) {
+      const ai = await customAiStructure(r.freeText);
+      if (ai.length) return ai;
+    }
+    return r.questions;
+  }
+  if (ext === 'pdf') return customParsePdf(file);
+  throw new Error('不支持的格式：' + (ext || '未知'));
+}
+
+/** PDF：文本层优先；扫描页转图走识图转写员（合并后 image-reader） */
+async function customParsePdf(file) {
+  const { parseTxt } = await import('./lib/custom-parser.js');
+  const pdfjs = await import('./vendor/pdfjs/pdf.min.mjs');
+  pdfjs.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
+  const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
+  const texts = [];
+  const pendingOcr = [];
+  for (let p = 1; p <= doc.numPages; p++) {
+    const page = await doc.getPage(p);
+    const tc = await page.getTextContent();
+    const pageText = tc.items.map((i) => i.str).join(' ').trim();
+    if (pageText.length > 20) { texts.push(pageText); continue; }
+    const viewport = page.getViewport({ scale: 2 });
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.min(viewport.width, 2600);
+    canvas.height = Math.min(viewport.height, 2600);
+    await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
+    pendingOcr.push(canvas.toDataURL('image/jpeg', 0.85));
+  }
+  for (let i = 0; i < pendingOcr.length; i++) {
+    try {
+      const r = await api('/api/ai/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: pendingOcr[i], subject: '自定义' }) });
+      if (r.text) texts.push(r.text.trim());
+      else texts.push(`【第 ${i + 1} 页扫描件：${r.notice || '识别失败'}】`);
+    } catch (e) { texts.push(`【第 ${i + 1} 页扫描件识别失败：${e.message}】`); }
+  }
+  const joined = texts.join('\n').trim();
+  const qs = parseTxt(joined);
+  if (qs.length) return qs;
+  if (joined) return customAiStructure(joined);
+  return [];
+}
+
+/** AI 结构化兜底（题目解析员 custom-question-parser，分批 ≤10 段） */
+async function customAiStructure(text) {
+  const { aiStructure } = await import('./lib/custom-parser.js');
+  const chunks = String(text).split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
+  if (!chunks.length) return [];
+  return aiStructure(chunks, async (input) => {
+    const res = await api('/api/ai/structure', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: input }) });
+    if (!res.text) throw new Error(res.notice || '解析失败');
+    return res.text;
+  });
+}
+
+/** 预览表格 + 确认导入 */
+function customRenderPreview(qs, defaultName) {
+  const box = $('#import-preview');
+  if (!box) return;
+  if (!qs.length) { box.innerHTML = '<div class="card"><h3>解析结果</h3><div class="empty">未解析出题目，请检查文件内容或格式。</div></div>'; return; }
+  box.innerHTML = `
+    <div class="card">
+      <h3>解析结果：${qs.length} 题（<span class="muted">解析失败的题目会原样导入，可导入后在批次里编辑修正</span>）</h3>
+      <div class="custom-preview-scroll"><table class="custom-preview">
+        <thead><tr><th>#</th><th>提示</th><th>材料</th><th>选项</th><th>答案</th><th>解析</th><th></th></tr></thead>
+        <tbody>${qs.map((q, i) => `<tr class="${q.failed ? 'fail' : ''}">
+          <td>${i + 1}</td>
+          <td>${esc((q.prompt || '').slice(0, 60))}</td>
+          <td>${esc((q.material || '').slice(0, 40))}</td>
+          <td>${esc((q.options || []).join(' | ').slice(0, 40))}</td>
+          <td>${esc(q.answer ? customAnswerDisplay(q.answer, q.options) : '无答案')}</td>
+          <td>${esc((q.analysis || '').slice(0, 30))}</td>
+          <td>${q.failed ? '<span class="tag warn">待人工修正</span>' : ''}</td>
+        </tr>`).join('')}</tbody>
+      </table></div>
+      <div class="import-confirm">
+        <input type="text" id="import-name" placeholder="批次名称" value="${esc(defaultName)}">
+        <button class="btn primary" id="import-ok">确认导入</button>
+      </div>
+    </div>
+  `;
+  $('#import-ok').onclick = async () => {
+    const name = $('#import-name').value.trim() || '未命名批次';
+    try {
+      const r = await api('/api/custom/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        name,
+        questions: qs.map((q) => ({ prompt: q.prompt || '', material: q.material || '', options: q.options || [], answer: q.answer || '', answer_index: q.answer_index == null ? -1 : q.answer_index, analysis: q.analysis || '' })),
+      }) });
+      toast(`已导入「${r.name}」${r.count} 题`);
+      renderCustomBank();
+    } catch (e) { toast('导入失败：' + e.message); }
+  };
+}
+
+/** 单题编辑弹窗（保存时自动重算 answer_index） */
+function customEditQuestion(q, batchName) {
+  const ansDisplay = /^\[/.test(q.answer || '') ? customAnswerDisplay(q.answer, q.options) : q.answer || '';
+  const sheet = customSheet(`
+    <h3>编辑题目 <span class="muted">（${esc(batchName || '')}）</span></h3>
+    <label>提示（题干）</label>
+    <textarea id="eq-prompt" rows="3">${esc(q.prompt || '')}</textarea>
+    <label>材料（无则留空）</label>
+    <textarea id="eq-material" rows="2">${esc(q.material || '')}</textarea>
+    <label>选项（每行一个，如 A. 选项内容；无选项留空）</label>
+    <textarea id="eq-options" rows="${Math.max(2, (q.options || []).length)}">${esc((q.options || []).join('\n'))}</textarea>
+    <label>答案（A / AB / 正确 / 错误，留空=无答案不判分）</label>
+    <input type="text" id="eq-answer" value="${esc(ansDisplay)}" placeholder="如 B 或 AB">
+    <label>解析（无则留空）</label>
+    <textarea id="eq-analysis" rows="2">${esc(q.analysis || '')}</textarea>
+    <div class="sheet-actions">
+      <button class="btn primary" id="eq-save">保存</button>
+      <button class="btn" id="eq-cancel">取消</button>
+    </div>
+  `, true);
+  $('#eq-cancel').onclick = () => sheet.remove();
+  $('#eq-save').onclick = async () => {
+    const options = $('#eq-options').value.split('\n').map((s) => s.trim()).filter(Boolean);
+    const { normalizeAnswer } = await import('./lib/custom-parser.js');
+    const norm = normalizeAnswer($('#eq-answer').value.trim(), options);
+    try {
+      await api('/api/custom/question?id=' + q.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
+        id: q.id,
+        prompt: $('#eq-prompt').value.trim(),
+        material: $('#eq-material').value.trim(),
+        options: norm.options,
+        answer: norm.answer,
+        answer_index: norm.answer_index,
+        analysis: $('#eq-analysis').value.trim(),
+      }) });
+      sheet.remove();
+      toast('已保存');
+      renderCustomBatch(q.batch_id, true);
+    } catch (e) { toast('保存失败：' + e.message); }
+  };
+}
+
+function customRenameBatch(b) {
+  const sheet = customSheet(`
+    <h3>批次改名</h3>
+    <input type="text" id="rn-name" value="${esc(b.name)}">
+    <div class="sheet-actions">
+      <button class="btn primary" id="rn-ok">保存</button>
+      <button class="btn" id="rn-cancel">取消</button>
+    </div>
+  `);
+  $('#rn-cancel').onclick = () => sheet.remove();
+  $('#rn-ok').onclick = async () => {
+    const name = $('#rn-name').value.trim();
+    if (!name) { toast('名称不能为空'); return; }
+    try {
+      await api('/api/custom/batch?id=' + b.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: b.id, name }) });
+      sheet.remove();
+      toast('已改名');
+      renderCustomBank(true);
+    } catch (e) { toast('改名失败：' + e.message); }
+  };
+}
+
+function customDeleteBatch(b) {
+  const sheet = customSheet(`
+    <h3>删除批次「${esc(b.name)}」？</h3>
+    <p class="muted">将同时删除该批次的 ${b.count} 道题（做题记录保留）。此操作不可恢复。</p>
+    <div class="sheet-actions">
+      <button class="btn danger" id="del-ok">确认删除</button>
+      <button class="btn" id="del-cancel">取消</button>
+    </div>
+  `);
+  $('#del-cancel').onclick = () => sheet.remove();
+  $('#del-ok').onclick = async () => {
+    try {
+      await api('/api/custom/batch?id=' + b.id, { method: 'DELETE' });
+      sheet.remove();
+      toast('已删除');
+      renderCustomBank(true);
+    } catch (e) { toast('删除失败：' + e.message); }
+  };
+}
+
+function customDeleteQuestion(q) {
+  const sheet = customSheet(`
+    <h3>删除这道题？</h3>
+    <p class="muted">${esc((q.prompt || '').slice(0, 50))}</p>
+    <div class="sheet-actions">
+      <button class="btn danger" id="dq-ok">确认删除</button>
+      <button class="btn" id="dq-cancel">取消</button>
+    </div>
+  `);
+  $('#dq-cancel').onclick = () => sheet.remove();
+  $('#dq-ok').onclick = async () => {
+    try {
+      await api('/api/custom/question?id=' + q.id, { method: 'DELETE' });
+      sheet.remove();
+      toast('已删除');
+      renderCustomBatch(q.batch_id, true);
+    } catch (e) { toast('删除失败：' + e.message); }
+  };
 }
 
 // ---------- 科目页（粉笔风格：统计条 + 模块列表 + 分类试卷） ----------

@@ -503,6 +503,14 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
       return callVisionLocal(agent, String(image), 'ocr', request);
     },
 
+    /** POST /api/ai/structure — 自定义题库：题目文本结构化（custom-question-parser）；与 server 同构 */
+    async structure({ text }) {
+      const agent = loadAgents(defaults).find((x) => x.role === 'custom-question-parser');
+      if (!agent) return { error: '题目解析员未启用，请到 AI 设置页配置' };
+      if (!text || !String(text).trim()) return { error: '缺少文本' };
+      return callChat(agent, String(text), request);
+    },
+
     /** POST /api/ai/grade — 申论/主观题批改 */
     async grade({ questionId, answer, image }) {
       const agent = loadAgents(defaults).find((x) => x.role === 'shenlun-grader');

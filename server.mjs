@@ -1449,13 +1449,20 @@ const server = http.createServer(async (req, res) => {
         }
         return json(res, 200, { ok: true });
       }
-      // 判分
+      // 判分（粉笔题 + 自定义题 custom- 前缀均支持）
       if (pathname === '/api/check' && req.method === 'POST') {
         let body = '';
         for await (const chunk of req) body += chunk;
         const { questionId, selected } = JSON.parse(body || '{}');
         if (questionId == null) return err(res, 400, '缺少 questionId');
-        const q = qQuestionById.get(questionId);
+        let q = null;
+        if (String(questionId).startsWith('custom-')) {
+          const cid = Number(String(questionId).replace(/^custom-/, ''));
+          const r = pdb.prepare('SELECT * FROM custom_questions WHERE id = ?').get(cid);
+          if (r) q = { content: r.prompt, material: r.material || '', options: r.options, answer: r.answer || '', answerIndex: r.answer_index == null ? -1 : Number(r.answer_index), analysis: r.analysis || '', type: 'custom' };
+        } else {
+          q = qQuestionById.get(questionId);
+        }
         if (!q) return err(res, 404, '题目不存在');
         return json(res, 200, checkAnswer(q, selected));
       }
@@ -1602,10 +1609,11 @@ const server = http.createServer(async (req, res) => {
         if (!b) return err(res, 404, '批次不存在');
         const rows = pdb.prepare('SELECT * FROM custom_questions WHERE batch_id = ? ORDER BY id ASC').all(bid);
         const questions = rows.map((r) => ({
+          id: `custom-${r.id}`,
           questionId: `custom-${r.id}`,
           content: r.prompt,
           material: r.material || '',
-          options: r.options,
+          options: JSON.parse(r.options || '[]'),
           answer: r.answer || '',
           answerIndex: r.answer_index == null ? -1 : Number(r.answer_index),
           analysis: r.analysis || '',
@@ -2014,6 +2022,18 @@ const server = http.createServer(async (req, res) => {
         }], 'ocr');
         if (v.error) return json(res, 200, { notice: v.error, text: null });
         return json(res, 200, { notice: '识别完成', text: v.content });
+      }
+      // ---- 自定义题库：题目结构化（custom-question-parser） ----
+      if (pathname === '/api/ai/structure' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { text } = JSON.parse(body || '{}');
+        if (!text || !String(text).trim()) return err(res, 400, '缺少文本');
+        const agent = getAgent('custom-question-parser');
+        if (!agent) return json(res, 200, { notice: '题目解析员未启用，请到 AI 设置页配置', text: null });
+        const r = await callAgent(agent, String(text));
+        if (r.error) return json(res, 200, { notice: r.error, text: null });
+        return json(res, 200, { notice: '解析完成', text: r.content });
       }
       // ---- 申论材料：查缓存 / 懒提取（PDF → Chrome 渲染 → GLM OCR） ----
       const findPdfForPaper = (paperId) => {
