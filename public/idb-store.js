@@ -106,21 +106,26 @@ export function createIdbStore(opts = {}) {
     throw new Error(`未知存储 kind: ${kind}`);
   }
 
+  /** 内部：读取某 store 全部行（getAll 方法与 nextId 共用） */
+  async function readAll(kind) {
+    if (!STORES.includes(kind)) throw new Error(`未知存储 kind: ${kind}`);
+    const rows = await tx(kind, 'readonly', (s) => {
+      const out = [];
+      return new Promise((resolve) => {
+        const req = s.openCursor();
+        req.onsuccess = () => {
+          const cur = req.result;
+          if (cur) { out.push(cur.value); cur.continue(); }
+          else resolve(out);
+        };
+      });
+    });
+    return rows;
+  }
+
   return {
     async getAll(kind) {
-      if (!STORES.includes(kind)) throw new Error(`未知存储 kind: ${kind}`);
-      const rows = await tx(kind, 'readonly', (s) => {
-        const out = [];
-        return new Promise((resolve) => {
-          const req = s.openCursor();
-          req.onsuccess = () => {
-            const cur = req.result;
-            if (cur) { out.push(cur.value); cur.continue(); }
-            else resolve(out);
-          };
-        });
-      });
-      return rows;
+      return readAll(kind);
     },
 
     async put(kind, row) {
@@ -134,7 +139,9 @@ export function createIdbStore(opts = {}) {
 
     /** 分配数字自增 id（custom_batches / custom_questions） */
     async nextId(kind) {
-      return nextNumericId(getAll, kind);
+      if (!STORES.includes(kind)) throw new Error(`未知存储 kind: ${kind}`);
+      const rows = await readAll(kind);
+      return rows.reduce((m, r) => Math.max(m, Number(r && r.id) || 0), 0) + 1;
     },
 
     async deleteBy(kind, key, value) {
