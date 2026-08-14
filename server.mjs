@@ -212,11 +212,13 @@ async function callVision(apiKey, baseUrl, model, imgs, mode = 'describe') {
 const MIME = {
   '.html': 'text/html; charset=utf-8',
   '.js': 'text/javascript; charset=utf-8',
+  '.mjs': 'text/javascript; charset=utf-8',
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
+  '.wasm': 'application/wasm',
 };
 
 /** 判分：选项索引 → 是否正确（与前端 judge 逻辑对齐） */

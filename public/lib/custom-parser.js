@@ -212,8 +212,7 @@ export async function aiStructure(texts, callAi, batchSize = 10) {
   return results;
 }
 
-/** 从 AI 输出中提取 JSON 数组/对象（剥 ```json 围栏，括号平衡扫描截取完整片段） */
-export function extractJson(text) {
+/** 从 AI 输出中提取 JSON 数组/对象（剥 ```json 围栏，括号平衡扫描截取完整片段） */export function extractJson(text) {
   const s = String(text ?? '').trim();
   if (!s) return null;
   const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
@@ -245,6 +244,19 @@ export function extractJson(text) {
     }
   }
   return null;
+}
+
+/** 题目去重（PDF 常见"题目页 + 答案解析页"重复）：按题干指纹去重，保留答案/解析更全的版本 */
+export function dedupeQuestions(qs) {
+  const seen = new Map();
+  const score = (q) => (q.answer ? 2 : 0) + (q.analysis ? 1 : 0) + (q.material ? 0.5 : 0);
+  for (const q of qs) {
+    const key = String(q.prompt || '').replace(/\s+/g, '');
+    if (!key) { seen.set(Symbol(), q); continue; } // 无题干（封面等）不参与去重
+    const prev = seen.get(key);
+    if (!prev || score(q) > score(prev)) seen.set(key, q);
+  }
+  return [...seen.values()];
 }
 
 /** docx 文本抽取（浏览器 DecompressionStream 解 zip 的 document.xml） */

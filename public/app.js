@@ -864,9 +864,10 @@ async function customParsePasted(text) {
   return { questions: await customAiStructure(text), raw: text };
 }
 
-/** PDF：文本层优先；扫描页转图走识图转写员（合并后 image-reader） */
+/** PDF：文本层优先；扫描页转图走识图转写员（合并后 image-reader）
+ * 文本层拼接用 hasEOL 保留换行（pdf.js items 是字符级片段，join(' ') 会丢换行导致整页成一行） */
 async function customParsePdf(file) {
-  const { parseTxt } = await import('./lib/custom-parser.js');
+  const { parseTxt, dedupeQuestions } = await import('./lib/custom-parser.js');
   const pdfjs = await import('./vendor/pdfjs/pdf.min.mjs');
   pdfjs.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
   const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
@@ -875,7 +876,8 @@ async function customParsePdf(file) {
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const tc = await page.getTextContent();
-    const pageText = tc.items.map((i) => i.str).join(' ').trim();
+    // hasEOL=true 的行尾补换行，其余补空格（保留 PDF 行结构）
+    const pageText = tc.items.map((i) => i.str + (i.hasEOL ? '\n' : ' ')).join('').replace(/[ \t]+\n/g, '\n').trim();
     if (pageText.length > 20) { texts.push(pageText); continue; }
     const viewport = page.getViewport({ scale: 2 });
     const canvas = document.createElement('canvas');
@@ -892,7 +894,8 @@ async function customParsePdf(file) {
     } catch (e) { texts.push(`【第 ${i + 1} 页扫描件识别失败：${e.message}】`); }
   }
   const joined = texts.join('\n').trim();
-  const qs = parseTxt(joined);
+  // 过滤封面/页眉等无题结构的块（无选项且无答案且无解析）；保留真正题目
+  const qs = dedupeQuestions(parseTxt(joined)).filter((q) => q.options.length || q.answer || q.analysis);
   if (qs.length) return qs;
   if (joined) return customAiStructure(joined);
   return [];
