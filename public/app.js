@@ -769,17 +769,34 @@ async function renderImport() {
   view.innerHTML = `
     <div class="card">
       <h3>选择文件（可多选）</h3>
-      <p class="muted">支持 PDF（扫描版自动识图）、Excel（.xlsx/.xls，固定列或自由格式）、Word（.docx）、TXT。一次导入 = 一个批次。</p>
-      <input type="file" id="import-file" accept=".pdf,.xlsx,.xls,.txt,.docx" multiple>
+      <p class="muted">支持 PDF（扫描版自动识图）、Excel（.xlsx/.xls，固定列或自由格式）、Word（.docx）、TXT、图片（jpg/png/webp 等，自动识别图中文字）。一次导入 = 一个批次。</p>
+      <input type="file" id="import-file" accept=".pdf,.xlsx,.xls,.txt,.docx,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple>
       <div id="import-progress" class="import-progress"></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <h3>或直接粘贴文字</h3>
+      <p class="muted">粘贴题目文本（含题干/选项/答案/解析，可多题），点「解析文字」自动切分。</p>
+      <textarea id="import-paste" rows="6" style="width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-size:13.5px;font-family:inherit;resize:vertical" placeholder="示例：&#10;1. 我国现行宪法是哪一年颁布的？&#10;A. 1949年  B. 1954年  C. 1978年  D. 1982年&#10;答案：D&#10;解析：现行宪法是1982年颁布的。"></textarea>
+      <div style="margin-top:10px"><button class="btn primary" id="import-paste-btn">解析文字</button></div>
     </div>
     <div id="import-preview"></div>
   `;
+  $('#import-paste-btn').onclick = async () => {
+    const text = $('#import-paste').value.trim();
+    if (!text) { toast('请先粘贴题目文字'); return; }
+    const progress = $('#import-progress');
+    progress.innerHTML = '<div class="spinner"></div><div class="muted">解析粘贴文字…</div>';
+    try {
+      const qs = await customParsePasted(text);
+      progress.innerHTML = '';
+      customRenderPreview(qs, '粘贴文字');
+    } catch (e) { progress.innerHTML = ''; toast('解析失败：' + e.message); }
+  };
   $('#import-file').onchange = async () => {
     const files = [...$('#import-file').files];
     if (!files.length) return;
     const progress = $('#import-progress');
-    progress.innerHTML = '<div class="spinner"></div><div class="muted">解析中（扫描版 PDF 需逐页识图，约 5~20 秒/页）…</div>';
+    progress.innerHTML = '<div class="spinner"></div><div class="muted">解析中（扫描版 PDF / 图片需识图，约 5~20 秒/张）…</div>';
     const all = [];
     for (let i = 0; i < files.length; i++) {
       progress.innerHTML = `<div class="muted">解析 ${files[i].name}（${i + 1}/${files.length}）…</div>`;
@@ -817,7 +834,33 @@ async function customParseFile(file) {
     return r.questions;
   }
   if (ext === 'pdf') return customParsePdf(file);
+  // 图片（jpg/png/webp/bmp/gif）：OCR 转文字 → 规则切分 + AI 兜底
+  if (['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext)) return customParseImage(file);
   throw new Error('不支持的格式：' + (ext || '未知'));
+}
+
+/** 图片 OCR：读 dataURL → 识图转写员（合并后 image-reader）→ 文本 → 规则切分 + AI 兜底 */
+async function customParseImage(file) {
+  const dataUrl = await new Promise((res, rej) => {
+    const fr = new FileReader();
+    fr.onload = () => res(fr.result);
+    fr.onerror = () => rej(new Error('读取图片失败'));
+    fr.readAsDataURL(file);
+  });
+  const r = await api('/api/ai/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl, subject: '自定义' }) });
+  if (!r.text) throw new Error(r.notice || 'OCR 识别失败');
+  const { parseTxt } = await import('./lib/custom-parser.js');
+  const qs = parseTxt(r.text);
+  if (qs.length) return qs;
+  return customAiStructure(r.text);
+}
+
+/** 粘贴文字解析：规则切分优先，失败走 AI 结构化 */
+async function customParsePasted(text) {
+  const { parseTxt } = await import('./lib/custom-parser.js');
+  const qs = parseTxt(text);
+  if (qs.length) return qs;
+  return customAiStructure(text);
 }
 
 /** PDF：文本层优先；扫描页转图走识图转写员（合并后 image-reader） */
