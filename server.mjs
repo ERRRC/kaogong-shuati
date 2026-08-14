@@ -2023,7 +2023,7 @@ const server = http.createServer(async (req, res) => {
         if (v.error) return json(res, 200, { notice: v.error, text: null });
         return json(res, 200, { notice: '识别完成', text: v.content });
       }
-      // ---- 自定义题库：题目结构化（custom-question-parser） ----
+      // ---- 自定义题库：题目筛选整理（custom-question-parser） ----
       if (pathname === '/api/ai/structure' && req.method === 'POST') {
         let body = '';
         for await (const chunk of req) body += chunk;

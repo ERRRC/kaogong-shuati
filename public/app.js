@@ -787,9 +787,9 @@ async function renderImport() {
     const progress = $('#import-progress');
     progress.innerHTML = '<div class="spinner"></div><div class="muted">解析粘贴文字…</div>';
     try {
-      const qs = await customParsePasted(text);
+      const r = await customParsePasted(text);
       progress.innerHTML = '';
-      customRenderPreview(qs, '粘贴文字');
+      customRenderPreview(r.questions || r, '粘贴文字');
     } catch (e) { progress.innerHTML = ''; toast('解析失败：' + e.message); }
   };
   $('#import-file').onchange = async () => {
@@ -801,8 +801,8 @@ async function renderImport() {
     for (let i = 0; i < files.length; i++) {
       progress.innerHTML = `<div class="muted">解析 ${files[i].name}（${i + 1}/${files.length}）…</div>`;
       try {
-        const qs = await customParseFile(files[i]);
-        all.push(...qs);
+        const r = await customParseFile(files[i]);
+        all.push(...(Array.isArray(r) ? r : (r.questions || [])));
       } catch (e) {
         all.push({ prompt: `【解析失败】${files[i].name}：${e.message}`, material: '', options: [], answer: '', answer_index: -1, analysis: '', failed: true });
       }
@@ -815,8 +815,8 @@ async function renderImport() {
 async function customParseFile(file) {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   const P = () => import('./lib/custom-parser.js');
-  if (ext === 'txt') { const { parseTxt } = await P(); return parseTxt(await file.text()); }
-  if (ext === 'docx') { const { docxToText, parseTxt } = await P(); return parseTxt(await docxToText(file)); }
+  if (ext === 'txt') { const { parseTxt } = await P(); const text = await file.text(); return { questions: parseTxt(text), raw: text }; }
+  if (ext === 'docx') { const { docxToText, parseTxt } = await P(); const text = await docxToText(file); return { questions: parseTxt(text), raw: text }; }
   if (ext === 'doc') throw new Error('旧版 .doc 请用 Word 另存为 .docx 或 TXT 后再导入');
   if (ext === 'xlsx' || ext === 'xls') {
     const { parseExcel, aiStructure } = await P();
@@ -826,14 +826,15 @@ async function customParseFile(file) {
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
     const r = parseExcel(rows);
-    if (r.questions.length && r.questions.some((q) => q.prompt)) return r.questions;
+    const raw = r.freeText || rows.map((rr) => rr.filter(Boolean).join(' | ')).filter(Boolean).join('\n');
+    if (r.questions.length && r.questions.some((q) => q.prompt)) return { questions: r.questions, raw };
     if (r.freeText && r.freeText.trim().length > 20) {
       const ai = await customAiStructure(r.freeText);
-      if (ai.length) return ai;
+      if (ai.length) return { questions: ai, raw: r.freeText };
     }
-    return r.questions;
+    return { questions: r.questions, raw };
   }
-  if (ext === 'pdf') return customParsePdf(file);
+  if (ext === 'pdf') { const r = await customParsePdf(file); return { questions: r, raw: '' }; }
   // 图片（jpg/png/webp/bmp/gif）：OCR 转文字 → 规则切分 + AI 兜底
   if (['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext)) return customParseImage(file);
   throw new Error('不支持的格式：' + (ext || '未知'));
@@ -851,16 +852,16 @@ async function customParseImage(file) {
   if (!r.text) throw new Error(r.notice || 'OCR 识别失败');
   const { parseTxt } = await import('./lib/custom-parser.js');
   const qs = parseTxt(r.text);
-  if (qs.length) return qs;
-  return customAiStructure(r.text);
+  if (qs.length) return { questions: qs, raw: r.text };
+  return { questions: await customAiStructure(r.text), raw: r.text };
 }
 
 /** 粘贴文字解析：规则切分优先，失败走 AI 结构化 */
 async function customParsePasted(text) {
   const { parseTxt } = await import('./lib/custom-parser.js');
   const qs = parseTxt(text);
-  if (qs.length) return qs;
-  return customAiStructure(text);
+  if (qs.length) return { questions: qs, raw: text };
+  return { questions: await customAiStructure(text), raw: text };
 }
 
 /** PDF：文本层优先；扫描页转图走识图转写员（合并后 image-reader） */
