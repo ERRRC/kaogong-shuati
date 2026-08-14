@@ -10,7 +10,7 @@
 
 核心需求（用户确认）：
 - 主界面（首页科目卡区）显示"自定义题库"入口，下方是小分支卡片（每个 = 一个批次）
-- 通过文件导入题目：**PDF、Excel 为主，其他格式（TXT/Word）也支持**；PDF 识别调用 AI 设置里的识图转写员（mimo-v2.5-free）
+- 通过文件导入题目：**PDF、Excel 为主，其他格式（TXT/Word）也支持**；PDF 扫描版识别走 AI 设置里的「识图转写员」（role=image-reader，GLM-4.1V-Thinking-Flash，智谱）
 - 软件自动判断并分类每道题的五个字段：**提示（=题干）、材料、选项、答案、解析**
 - 无解析显示"无解析"，无答案显示"无答案"
 - 大分支（=批次，一次导入一个文件）可改名、合并、拆分（勾选题目拆出）
@@ -25,7 +25,7 @@
 ```
 文件选择(<input type="file">)
   → 前端解析（vendor 引入 SheetJS / pdf.js）
-  → 规则切分 + AI 兜底（现有 AI 网关，识图转写员 mimo-v2.5-free）
+  → 规则切分 + AI 兜底（现有 AI 网关；PDF 扫描版页转图后走「识图转写员」image-reader，GLM-4.1V-Thinking-Flash）
   → 结构化题目 JSON
   → Web 端: POST /api/custom/import → practice.db 新表
   → App 端: local-handler.js 镜像 → IndexedDB 新 objectStore
@@ -103,10 +103,12 @@ CREATE INDEX IF NOT EXISTS idx_cq_batch ON custom_questions(batch_id);
 | Excel 自由格式 | 规则切分（正则识别 `材料：` `A.` `B.` `C.` `D.` `答案：` `解析：`）→ 低置信 AI 兜底 |
 | TXT/Word(.docx 解包) | 同上规则切分 + AI 兜底 |
 | PDF 有文本层 | pdf.js 提取文本 → 规则切分 + AI 兜底 |
-| PDF 扫描版 | pdf.js 渲染每页为 canvas → 图片走识图转写员（mimo-v2.5-free，现有 AI 网关）→ 文本 → 规则切分 |
+| PDF 扫描版 | pdf.js 渲染每页为 canvas → 图片走「识图转写员」（role=image-reader，GLM-4.1V-Thinking-Flash，智谱 open.bigmodel.cn，现有 AI 网关 callVision）→ 文本 → 规则切分 |
 
-AI 兜底：新增解析提示词（走现有 AI 网关：Web `/api/ai`，App `ai-local.js`），输入原始文本 → 输出 JSON
+AI 兜底：新增智能体「题目解析员」（role=custom-question-parser，默认 model=GLM-4.1V-Thinking-Flash / 智谱 open.bigmodel.cn，与识图转写员同款底座，用户可在 AI 设置页增改），走现有 AI 网关（Web `/api/ai`，App `ai-local.js`），输入原始文本 → 输出 JSON
 `{prompt, material, options[], answer, analysis}`；解析失败/超时则该题标记为"待人工修正"仍可导入。
+
+**PDF 扫描版识别跟随的 AI 已明确：识图转写员（image-reader，GLM-4.1V-Thinking-Flash）**——PDF 每页渲染为图片后走 `callVision` 多模态接口（server.mjs 已有；`mimo-v2.5` 仅为代码兜底常量，实际模型取自 AI 设置页，当前配置为 GLM-4.1V-Thinking-Flash）。
 
 vendor 静态库（下载到 public/vendor/，服务端零依赖）：
 - `public/vendor/xlsx/xlsx.full.min.js`（SheetJS CE 0.20.x）
