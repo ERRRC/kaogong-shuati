@@ -4,7 +4,7 @@ android {
     namespace "com.kaogong.app"
     compileSdk rootProject.ext.compileSdkVersion
     defaultConfig {
-        applicationId "com.kaogong.app"
+        applicationId "com.kaogong.app.ai"
         minSdkVersion rootProject.ext.minSdkVersion
         targetSdkVersion rootProject.ext.targetSdkVersion
         versionCode 1

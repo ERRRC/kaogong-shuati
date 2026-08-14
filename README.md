@@ -146,7 +146,7 @@ fenbi-crawler/
 
 ## 已知限制 / 后续要做的
 
-- **行测/职测题目 JSON 无文本解析**：粉笔把文字解析做成了会员视频，`questions` 接口只返回题干/选项/答案（`correctAnswer.choice`）。要做"AI 解析"正好由你应用里的 LLM 补上。
+- **行测/职测题目 JSON 无文本解析**：爬虫用的 `GET /api/{subject}/questions?ids=` 接口只返回题干/选项/答案（`correctAnswer.choice`），**JSON 里没有 `analysis` 字段**（2026-08 实测确认）。网页版"解析"实际来自另一个接口 `GET /api/{subject}/solutions?ids=`（返回 `solution` HTML + `keypoints` 等），**该接口需登录，游客 401**；爬虫当年是游客模式，故 95,867 题 `analysis` 全空。2026-08 已用 4 账号轮换补爬（`fetch-solutions.mjs`，零风控）：**84,867 题已有官方解析**（行测 100% 全覆盖、职测 25.3%、申论 2.3%，综应官方无解析走 AI）。解析已全链路接入：Web 端（`server.mjs`/api/practice、/api/question 返回 `analysis`）+ App 端（`build-app-assets.mjs` 数据包含 `analysis` 列，做题中「查看解析」/交卷页每题直接展示官方解析，AI 解析按钮保留作补充）。
 - **申论/综应无官方参考答案**：`correctAnswer` 为 `null`，给定资料在配套 PDF 里。AI 批改需要模型自己生成参考答案 + 评分。
 - 登录可能遇到验证码 / 风控，接口参数（`kav/av/hav/version`）如果失效需要按新版前端逆向更新。
 - 反爬策略（IP 封禁等）未处理，脚本已内置限速抖动，请勿并发多开。

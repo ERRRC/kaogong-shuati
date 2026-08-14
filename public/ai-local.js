@@ -223,7 +223,9 @@ async function callVisionLocal(agent, imageDataUrl, mode = 'ocr', request) {
 // 浏览器版传 fetch 包装；Capacitor 版传 CapacitorHttp 包装（见 local-bootstrap.mjs）。
 
 async function callChat(agent, userContent, request) {
-  if (!agent.api_key) return { error: '该 AI 未配置 api_key，请到 AI 设置页填写' };
+  // opencode.ai 免费网关无需 api_key；其余网关必须填写（NVIDIA/DeepSeek 等）
+  const isFreeGateway = /opencode\.ai|zen\/v1/i.test(agent.base_url || '');
+  if (!agent.api_key && !isFreeGateway) return { error: '该 AI 未配置 api_key，请到 AI 设置页填写' };
   if (!agent.base_url) return { error: '未配置 base_url，请到 AI 设置页填写' };
   const base = String(agent.base_url).replace(/\/+$/, '');
   const url = base.endsWith('/chat/completions') ? base : `${base}/chat/completions`;
@@ -246,11 +248,17 @@ async function callChat(agent, userContent, request) {
   };
   if (agent.reasoning_effort !== 'off') body.reasoning_effort = agent.reasoning_effort || 'low';
 
+  // 调试日志：记录实际发出的请求用的 model（不含 api_key）
+  console.log(`[AICALL] 实际请求: url=${url} model=${body.model}`);
+
+  const reqHeaders = { 'Content-Type': 'application/json' };
+  if (agent.api_key) reqHeaders.Authorization = `Bearer ${agent.api_key}`;
+
   let res;
   try {
     res = await request(url, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${agent.api_key}` },
+      headers: reqHeaders,
       body: JSON.stringify(body),
     });
   } catch (e) {
@@ -267,7 +275,7 @@ async function callChat(agent, userContent, request) {
       try {
         res = await request(url, {
           method: 'POST',
-          headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${agent.api_key}` },
+          headers: reqHeaders,
           body: JSON.stringify(body),
         });
       } catch (e2) {
@@ -314,9 +322,8 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
   }
   if (!Array.isArray(defaults) || !defaults.length) {
     defaults = [
-      { id: 1, name: '行测解析 AI', role: 'xingce-explainer', description: '行测/职测选择题解析', system_prompt: '你是一名资深公务员考试行测讲师。请解析用户发来的行测选择题：给出考点、正确项解析、错误项排除、解题技巧。', skill: 'gongkao-huasheng13', base_url: 'https://api.deepseek.com/v1', api_key: '', model: 'deepseek-chat', temperature: 0.3, max_tokens: 4000, enabled: 0 },
-      { id: 2, name: '申论批改 AI', role: 'shenlun-grader', description: '申论/综应主观题批改', system_prompt: '你是一名申论阅卷官。请对用户的作答按要点采分制评分（满分100），给出评分、参考答案要点、丢分原因、改进建议。', skill: 'shenlun-master', base_url: 'https://api.deepseek.com/v1', api_key: '', model: 'deepseek-chat', temperature: 0.4, max_tokens: 2000, enabled: 0 },
-      { id: 3, name: '学习进度顾问', role: 'progress-coach', description: '学习数据分析与规划', system_prompt: '你是一名考公学习规划顾问。请分析用户的学习数据并给出总体评估、薄弱环节、趋势分析、下一步行动建议。', skill: '', base_url: 'https://api.deepseek.com/v1', api_key: '', model: 'deepseek-chat', temperature: 0.5, max_tokens: 4000, enabled: 0 },
+      { id: 1, name: '行测解析 AI', role: 'xingce-explainer', description: '行测/职测选择题解析', system_prompt: '你是一名资深公务员考试行测讲师。请解析用户发来的行测选择题：给出考点、正确项解析、错误项排除、解题技巧。', skill: 'gongkao-huasheng13', base_url: 'https://opencode.ai/zen/v1', api_key: '', model: 'deepseek-v4-flash-free', temperature: 0.3, max_tokens: 4000, enabled: 0 },
+      { id: 2, name: '申论批改 AI', role: 'shenlun-grader', description: '申论/综应主观题批改', system_prompt: '你是一名申论阅卷官。请对用户的作答按要点采分制评分（满分100），给出评分、参考答案要点、丢分原因、改进建议。', skill: 'shenlun-master', base_url: 'https://opencode.ai/zen/v1', api_key: '', model: 'deepseek-v4-flash-free', temperature: 0.4, max_tokens: 2000, enabled: 0 },
       { id: 4, name: '识图转写员', role: 'image-reader', description: '图形/图表图片转写', system_prompt: '你是一名图像识别助手。请把图片内容完整准确地转写成文字。', skill: '', base_url: '', api_key: '', model: 'mimo-v2.5', temperature: 0.1, max_tokens: 2000, enabled: 0 },
     ];
   }
@@ -517,15 +524,6 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
       if (answer) lines.push(`我的作答：${answer}`);
       if (image) lines.push(`作答图片：${String(image).slice(0, 200)}`);
       const r = await callChat(agent, lines.join('\n'), request);
-      if (r.content) return { content: r.content };
-      return r;
-    },
-
-    /** POST /api/ai/progress — 学习数据分析 */
-    async progress(body) {
-      const agent = loadAgents(defaults).find((x) => x.role === 'progress-coach');
-      if (!agent) return { error: '学习进度顾问未启用，请到 AI 设置页配置' };
-      const r = await callChat(agent, `请分析以下学习数据并给出建议：\n${JSON.stringify(body || {})}`, request);
       if (r.content) return { content: r.content };
       return r;
     },

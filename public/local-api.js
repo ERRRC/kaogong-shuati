@@ -68,7 +68,7 @@ export function aggregateStats(records, tiku) {
 }
 
 // ---------- 记录层（存储适配器接口） ----------
-export function createRecordsApi(store, tiku) {
+export function createRecordsApi(store, tiku, onChanged) {
   return {
     /** 收藏列表（与 /api/favorites GET 同构：{list,total,offset,limit,hasMore}） */
     async favorites({ limit = 50, offset = 0 } = {}) {
@@ -78,13 +78,13 @@ export function createRecordsApi(store, tiku) {
       const page = rows.slice(offset, offset + limit);
       const list = [];
       for (const r of page) {
-        const q = tiku.get('SELECT content, type FROM questions WHERE questionId = ? LIMIT 1', r.question_id);
+        const q = tiku.get('SELECT content, contentHtml, type FROM questions WHERE questionId = ? LIMIT 1', r.question_id);
         list.push({
           questionId: r.question_id,
           subject: r.subject || '',
           chapter: r.chapter || '',
           time: r.created_at,
-          content: q?.content ? q.content.slice(0, 80) : null,
+          content: q?.content ? q.content.slice(0, 80) : (q?.contentHtml ? '（图片题）' : null),
           type: q?.type ?? null,
         });
       }
@@ -108,13 +108,34 @@ export function createRecordsApi(store, tiku) {
     async addRecord({ questionId, subject, chapter, type, selected, correct, costMs, paperId }) {
       if (questionId == null) throw new Error('缺少 questionId');
       const now = Date.now();
-      const dayStart = now - (now % 86400000);
+      // 按本地时区（中国 UTC+8）取当天零点：UTC 零点会在上午 8 点前把记录归到前一天，
+      // 导致“每天去重”失效与每日统计错位。
+      const d = new Date(now);
+      const dayStart = new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime();
+      // 同日去重只针对非错题记录（正确/主观题记录）；错题记录不参与去重——错题保护：
+      // 当天做对不覆盖错题记录（需累计 3 个日期做对才自动移除），做错记录始终保留
       const existing = (await store.getAll('records')).filter(
-        (r) => r.question_id === questionId && r.paper_id === (paperId ?? null) && r.created_at >= dayStart
+        (r) => r.question_id === questionId && r.paper_id === (paperId ?? null) && r.created_at >= dayStart && r.is_correct !== 0
       );
       const row = { question_id: questionId, paper_id: paperId ?? null, subject: subject || '', chapter: chapter || '', question_type: type ?? null, selected: selected ?? null, is_correct: correct ? 1 : 0, cost_ms: costMs ?? null, created_at: now };
       if (existing.length) await store.deleteBy('records', 'id', existing[0].id);
       await store.put('records', row);
+      // 错题自动移除：客观题累计做对 3 次（按不同日期计，与 server 口径一致）→ 删除该题错题记录，正确记录与统计保留
+      // 只针对行测/职测客观题（错题本收录范围）；主观题（correct=null）不参与
+      if (correct === true) {
+        const all = await store.getAll('records');
+        const okDays = new Set(
+          all.filter((r) => r.question_id === questionId && r.is_correct === 1)
+            .map((r) => new Date(r.created_at).toDateString())
+        );
+        if (okDays.size >= 3) {
+          for (const r of all) {
+            if (r.question_id === questionId && r.is_correct === 0) await store.deleteBy('records', 'id', r.id);
+          }
+        }
+      }
+      // 提交后刷新统计快照，使首页/章节完成度立即反映本次作答（无需重启 App）
+      if (onChanged) await onChanged();
       return { ok: true };
     },
     /** 统计（与 /api/records/stats 同构，聚合本地记录） */
@@ -123,12 +144,17 @@ export function createRecordsApi(store, tiku) {
       const agg = aggregateStats(records, tiku);
       const total = records.length;
       const done = new Set(records.filter((r) => r.is_correct).map((r) => `${r.subject}|${r.question_id}`)).size;
-      const wrong = records.filter((r) => !r.is_correct).length;
+      // 错题 = 严格答错（is_correct=0）；主观题（申论/综应 is_correct=null）不计入错题
+      const wrong = records.filter((r) => r.is_correct === 0).length;
       return { total, done, wrong };
     },
-    /** 错题本（与 /api/records/wrong 同构：答错题去重 + 分页） */
-    async wrong({ limit = 50, offset = 0 } = {}) {
-      const rows = (await store.getAll('records')).filter((r) => !r.is_correct);
+    /** 错题本（与 /api/records/wrong 同构：答错题去重 + 分页；只收客观题） */
+    async wrong({ limit = 50, offset = 0, subject } = {}) {
+      let rows = (await store.getAll('records')).filter((r) => r.is_correct === 0);
+      // 错题本只收录客观题（公考行测 / 事业编职测）；申论·综应等主观题不进错题本
+      const WRONG_SUBJECTS = new Set(['公务员·行测', '事业编·职测']);
+      rows = rows.filter((r) => WRONG_SUBJECTS.has(r.subject));
+      if (subject) rows = rows.filter((r) => r.subject === subject);
       rows.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
       const seen = new Set();
       const uniq = rows.filter((r) => (seen.has(r.question_id) ? false : (seen.add(r.question_id), true)));
@@ -136,12 +162,14 @@ export function createRecordsApi(store, tiku) {
       const page = uniq.slice(offset, offset + limit);
       const list = [];
       for (const r of page) {
-        const q = tiku.get('SELECT content, type FROM questions WHERE questionId = ? LIMIT 1', r.question_id);
+        const q = tiku.get('SELECT content, contentHtml, type FROM questions WHERE questionId = ? LIMIT 1', r.question_id);
         list.push({
           id: r.question_id,
-          content: q?.content ? q.content.slice(0, 60) : '',
-          answer: Array.isArray(r.selected) ? r.selected.join(',') : (r.selected ?? ''),
-          myAnswer: Array.isArray(r.selected) ? r.selected.join(',') : '',
+          questionId: r.question_id,   // 与 server /api/records/wrong 同构（app.js 点开用此字段）
+          content: q?.content ? q.content.slice(0, 60) : (q?.contentHtml ? '（图片题）' : ''),
+          available: !!q,              // 题库中已不存在的题（历史遗留）标记为不可重做
+          answer: Array.isArray(r.selected) ? r.selected.slice().sort((a, b) => a - b).join(',') : (r.selected ?? ''),
+          myAnswer: Array.isArray(r.selected) ? r.selected.slice().sort((a, b) => a - b).join(',') : '',
           subject: r.subject || '',
           chapter: r.chapter || '',
           time: r.created_at,
@@ -155,12 +183,12 @@ export function createRecordsApi(store, tiku) {
       const rows = (await store.getAll('records')).sort((a, b) => (b.created_at || 0) - (a.created_at || 0)).slice(0, limit);
       const list = [];
       for (const r of rows) {
-        const q = tiku.get('SELECT content, type FROM questions WHERE questionId = ? LIMIT 1', r.question_id);
+        const q = tiku.get('SELECT content, contentHtml, type FROM questions WHERE questionId = ? LIMIT 1', r.question_id);
         list.push({
           questionId: r.question_id,
           subject: r.subject || '',
           chapter: r.chapter || '',
-          content: q?.content ? q.content.slice(0, 60) : null,
+          content: q?.content ? q.content.slice(0, 60) : (q?.contentHtml ? '（图片题）' : null),
           type: q?.type ?? null,
           correct: !!r.is_correct,
           time: r.created_at,
@@ -204,8 +232,17 @@ export async function initLocalApi(opts) {
   if (!tiku || !store) throw new Error('initLocalApi 需要 tiku 与 store 适配器');
   const records = await store.getAll('records');
   const stats = aggregateStats(records, tiku);
+  // 统计快照刷新：答题记录提交后调用（见 records.addRecord 的 onChanged 回调），
+  // 原地替换 stats 的三个 Map 属性——local-queries 每次查询都动态读取，无需重启 App 即可刷新完成度。
+  async function refreshStats() {
+    const fresh = aggregateStats(await store.getAll('records'), tiku);
+    stats.doneBySubject = fresh.doneBySubject;
+    stats.chapterStats = fresh.chapterStats;
+    stats.subStats = fresh.subStats;
+    return stats;
+  }
   const query = createLocalApi(tiku, practice, stats);
-  const recordsApi = createRecordsApi(store, tiku);
+  const recordsApi = createRecordsApi(store, tiku, refreshStats);
   const imagesApi = images ? createImagesApi(images) : null;
   return { query, records: recordsApi, images: imagesApi, stats, store };
 }

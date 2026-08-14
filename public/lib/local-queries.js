@@ -26,9 +26,9 @@ const Q_PAPERS_BY_CATEGORY =
 const Q_PAPER_BY_ID =
   'SELECT id, subjectName, category, name, questionCount, difficulty, chapters FROM papers WHERE id = ?';
 const Q_QUESTIONS_BY_PAPER =
-  'SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty FROM questions q WHERE q.paperId = ? ORDER BY q.id';
+  'SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis FROM questions q WHERE q.paperId = ? ORDER BY q.id';
 const Q_QUESTION_BY_ID =
-  'SELECT questionId, paperId, chapter, type, content, contentHtml, options, answer, answerIndex, difficulty FROM questions WHERE questionId = ? LIMIT 1';
+  'SELECT questionId, paperId, chapter, type, content, contentHtml, options, answer, answerIndex, difficulty, analysis FROM questions WHERE questionId = ? ORDER BY id LIMIT 1';
 const Q_MATERIALS_BY_PAPER =
   'SELECT title, idx, text FROM materials WHERE paperId = ? ORDER BY idx';
 const Q_CAT_INDEX = (withSub) => withSub
@@ -183,6 +183,7 @@ export function toQuestion(q) {
     answer: q.answer,
     answerIndex: q.answerIndex,
     difficulty: q.difficulty,
+    analysis: q.analysis ?? null,
   };
 }
 
@@ -192,7 +193,9 @@ export function checkAnswer(q, selected) {
   const sel = (Array.isArray(selected) ? selected : [selected]).map(Number);
   const ans = String(q.answer ?? '').trim();
   if (ans.startsWith('[')) {
-    const correct = JSON.parse(ans).map(Number);
+    let parsed = JSON.parse(ans);
+    if (Array.isArray(parsed) && parsed.length && Array.isArray(parsed[0])) parsed = parsed[0];
+    const correct = parsed.map(Number);
     const ok = correct.length === sel.length && correct.every((v) => sel.includes(v));
     return { ok, correct, selected: sel, correctText: correct.map((i) => opts[i]).filter(Boolean) };
   }
@@ -263,7 +266,7 @@ function randomQuestions(tiku, subject, chapters, n, mock) {
   }
   const sel = picks.slice(0, n);
   const qs = tiku.all(
-    `SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty
+    `SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis
      FROM questions q WHERE q.id IN (${sel.map(() => '?').join(',')})`,
     ...sel
   );
@@ -315,7 +318,7 @@ function enrichGroups(tiku, practice, rows, subject) {
   const allIds = [...new Set([...qids, ...[...groupMembers.values()].flat()])];
   let qs = [];
   if (allIds.length) {
-    qs = tiku.all(`SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty FROM questions q WHERE q.questionId IN (${allIds.map(() => '?').join(',')}) GROUP BY q.questionId`, ...allIds);
+    qs = tiku.all(`SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis FROM questions q WHERE q.questionId IN (${allIds.map(() => '?').join(',')}) GROUP BY q.questionId`, ...allIds);
   }
   const orderOf = new Map(qs.map((q) => [q.questionId, q.id]));
   const byId = new Map(qs.map((q) => [q.questionId, q]));
@@ -577,9 +580,9 @@ function buildZhiCeLocal(tiku, practice, params) {
  *   stats.subStats:      Map<subjectName, Map<`category|sub`, okCount>>（申论/综应索引子项答对数；无记录返回 null）
  */
 export function createLocalApi(tiku, practice, stats = {}) {
-  const doneBySubject = stats.doneBySubject || new Map();
-  const chapterStats = stats.chapterStats || new Map();
-  const subStats = stats.subStats || new Map();
+  // 注意：stats 是可变引用（local-api 提交答题记录后会替换其 doneBySubject/chapterStats/subStats 属性），
+  // 因此这里不能把三个 Map 捕获为闭包常量，否则首页/章节完成度不会随做题实时刷新。
+  const statOf = (k) => stats[k] || new Map();
 
   const api = {
     /** 科目列表（与 /api/subjects 同构；done 来自本地记录） */
@@ -598,7 +601,7 @@ export function createLocalApi(tiku, practice, stats = {}) {
         subjectName: r.subjectName,
         papers: Number(r.papers),
         questions: r.subjectName === '事业编·综应' ? zongyingN : Number(r.questions),
-        done: Number(doneBySubject.get(r.subjectName) || 0),
+        done: Number(statOf('doneBySubject').get(r.subjectName) || 0),
       }));
     },
 
@@ -655,7 +658,7 @@ export function createLocalApi(tiku, practice, stats = {}) {
           ).map((r) => r.question_id);
           if (!ids.length) return [];
           const qs = tiku.all(
-            `SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty
+            `SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis
              FROM questions q WHERE q.questionId IN (${ids.map(() => '?').join(',')}) GROUP BY q.questionId`,
             ...ids
           );
@@ -859,7 +862,7 @@ export function createLocalApi(tiku, practice, stats = {}) {
         SELECT q.chapter, COUNT(*) c FROM questions q JOIN papers p ON p.id = q.paperId
         WHERE p.subjectName = ? ${cond} GROUP BY q.chapter ORDER BY c DESC
       `, subject);
-      const doneMap = chapterStats.get(subject) || new Map();
+      const doneMap = statOf('chapterStats').get(subject) || new Map();
       const list = totals.map((t) => {
         const d = doneMap.get(t.chapter);
         return {
@@ -927,7 +930,7 @@ export function createLocalApi(tiku, practice, stats = {}) {
         const essayFromIndex = essaySubjects.includes(subject);
         const nodeStats = (group, sub2) => {
           if (essayFromIndex) {
-            const okCount = subStats.get(subject)?.get(`${group}|${sub2}`) ?? null;
+            const okCount = statOf('subStats').get(subject)?.get(`${group}|${sub2}`) ?? null;
             const r = practice.get(`
               SELECT COUNT(*) c FROM question_categories qc
               WHERE qc.category = ? AND qc.sub = ? AND qc.subject = ?

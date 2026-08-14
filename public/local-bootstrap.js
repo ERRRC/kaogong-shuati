@@ -17,30 +17,54 @@ const isLocalMode = function () {
 
 if (isLocalMode()) {
   window.__LOCAL_MODE__ = true;
+  // 首启防白屏：显示"正在准备题库"遮罩（题库复制/解压期间 WebView 可能长时间无内容）
+  const splash = document.getElementById('boot-splash');
+  if (splash) splash.style.display = 'flex';
   window.__LOCAL_API_PROMISE__ = (async function () {
-    // ---------- 1. 题库引擎（sql.js） ----------
-    const { loadSqljsEngine } = await import('./sqljs-engine.js');
-    // 兼容两种部署：浏览器联调（../app-assets/）与 Capacitor 打包（./app-assets/）
-    async function firstExisting(candidates) {
-      for (const c of candidates) {
-        try {
-          const r = await fetch(c, { method: 'HEAD' });
-          if (r.ok) return c;
-        } catch {
-          /* 继续尝试 */
-        }
+    // ---------- 1. 题库引擎：原生 SQLite 同步桥优先（Capacitor App 主路径，内存友好），sql.js 兜底（浏览器联调） ----------
+    const engine = await import('./sqljs-engine.js');
+    let tiku = null;
+    let nativeMode = false;
+    if (window.NativeDB) {
+      try {
+        tiku = engine.loadNativeEngine();
+        nativeMode = true;
+      } catch (e) {
+        console.warn('原生题库加载失败，回退 sql.js：', e.message);
+        tiku = null;
       }
-      return candidates[0];
     }
-    // 注意：Android aapt2 打包 assets 时会自动解压 .gz 文件并去掉扩展名（tiku_app.db.gz → tiku_app.db），
-    // 因此 App 内直接请求未压缩的 tiku_app.db；浏览器联调（../app-assets/）同样用未压缩版
-    const dbUrl = await firstExisting(['./app-assets/tiku_app.db', '../app-assets/tiku_app.db']);
-    const imagesUrl = await firstExisting(['../app-assets/images.db', './app-assets/images.db']);
-    const tiku = await loadSqljsEngine({ gzUrl: dbUrl, imagesUrl });
+    if (!tiku) {
+      // 兼容两种部署：浏览器联调（../app-assets/）与 Capacitor 打包（./app-assets/）
+      async function firstExisting(candidates) {
+        for (const c of candidates) {
+          try {
+            const r = await fetch(c, { method: 'HEAD' });
+            if (r.ok) return c;
+          } catch {
+            /* 继续尝试 */
+          }
+        }
+        return candidates[0];
+      }
+      // 注意：Android aapt2 打包 assets 时会自动解压 .gz 文件并去掉扩展名（tiku_app.db.gz → tiku_app.db），
+      // 因此 App 内直接请求未压缩的 tiku_app.db；浏览器联调（../app-assets/）同样用未压缩版
+      const dbUrl = await firstExisting(['./app-assets/tiku_app.db', '../app-assets/tiku_app.db']);
+      const imagesUrl = await firstExisting(['../app-assets/images.db', './app-assets/images.db']);
+      tiku = await engine.loadSqljsEngine({ gzUrl: dbUrl, imagesUrl });
+    }
 
     // ---------- 2. 本地 API + 记录存储 ----------
     const { initLocalApiBrowser } = await import('./local-api.js');
-    const api = await initLocalApiBrowser({ tiku });
+    // 原生桥按 SQL 内容自动路由 tiku_app.db / images.db，可直接复用为图片引擎（公式图可用）
+    const api = await initLocalApiBrowser({ tiku, images: nativeMode ? tiku : null });
+    if (nativeMode) {
+      try {
+        await engine.importImagesFromNative(tiku);
+      } catch (e) {
+        console.warn('公式图导入失败（不影响题库使用）：', e.message);
+      }
+    }
 
     // ---------- 3. AI（直调 OpenAI 兼容接口） ----------
     const { createAiApi } = await import('./ai-local.js');
@@ -85,6 +109,8 @@ if (isLocalMode()) {
     // ---------- 4. 本地 API 路由 ----------
     const { createLocalHandler } = await import('./local-handler.js');
     const handler = createLocalHandler({ query: api.query, records: api.records, store: api.store, ai: ai });
+    // 调试/测试用：暴露记录存储（IndexedDB 适配器）
+    window.__LOCAL_STORE__ = api.store;
 
     // ---------- 5. 图片离线 Service Worker ----------
     if ('serviceWorker' in navigator) {
@@ -92,6 +118,10 @@ if (isLocalMode()) {
         console.warn('SW 注册失败（图片离线不可用）：', e.message);
       });
     }
+
+    // 就绪后移除启动遮罩
+    const splashEl = document.getElementById('boot-splash');
+    if (splashEl) splashEl.remove();
 
     console.log('[local-mode] 离线题库就绪');
     return handler;

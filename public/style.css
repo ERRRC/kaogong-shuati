@@ -303,6 +303,9 @@ h1, h2, h3, .hs-num, .stat-card .num { font-family: "Varela Round", "Nunito Sans
   transition: transform .1s ease, border-color .15s ease;
 }
 .list-item:active { transform: scale(.985); border-color: var(--primary); }
+.list-item.li-disabled { opacity: .55; }
+.list-item.li-disabled:active { transform: none; border-color: var(--border); }
+.list-item .li-badge { font-size: 10px; font-weight: 600; color: var(--text-3); background: var(--bg-2); border: 1px solid var(--border); border-radius: 4px; padding: 0 4px; margin-left: 4px; vertical-align: 1px; }
 .list-item .li-icon {
   width: 38px; height: 38px; border-radius: 12px; flex-shrink: 0;
   display: flex; align-items: center; justify-content: center;
@@ -318,6 +321,12 @@ h1, h2, h3, .hs-num, .stat-card .num { font-family: "Varela Round", "Nunito Sans
 .list-item .li-title { font-size: 14.5px; font-weight: 700; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .list-item .li-sub { font-size: 12px; color: var(--text-2); margin-top: 3px; }
 .list-item .li-arrow { color: var(--text-3); font-size: 15px; flex-shrink: 0; }
+.list-item .li-del {
+  color: var(--text-3); font-size: 15px; flex-shrink: 0; cursor: pointer;
+  padding: 6px 4px 6px 8px; border-radius: 8px; transition: color .15s, background .15s;
+}
+.list-item .li-del:hover { color: var(--red, #dc2626); background: var(--bg-2); }
+.list-item.li-disabled .li-del { opacity: .9; }
 .li-tip { font-size: 12px; color: var(--text-2); margin-top: 8px; }
 
 /* 徽章 */
@@ -406,6 +415,7 @@ h1, h2, h3, .hs-num, .stat-card .num { font-family: "Varela Round", "Nunito Sans
 /* 选项 */
 .option {
   display: flex; align-items: flex-start; width: 100%; text-align: left;
+  position: relative;
   background: var(--card);
   border: 1.5px solid var(--border);
   border-radius: 12px;
@@ -428,6 +438,24 @@ h1, h2, h3, .hs-num, .stat-card .num { font-family: "Varela Round", "Nunito Sans
 .option.wrong { border-color: var(--red); background: var(--red-soft); }
 .option.wrong .opt-key { background: var(--red); color: #fff; }
 .option:disabled { opacity: .75; }
+/* 长按排除（排除法）：置灰划线 + 右上角 ✕；不可点击，再次长按恢复 */
+.option.excluded {
+  opacity: .42;
+  border-style: dashed;
+  border-color: var(--text-3, #9aa0aa);
+  background: var(--bg-soft);
+  text-decoration: line-through;
+  -webkit-user-select: none; user-select: none;
+}
+.option.excluded .opt-key { background: var(--bg-2, #e4e7ec); color: var(--text-3, #9aa0aa); }
+.option.excluded::after {
+  content: '✕';
+  position: absolute;
+  top: 6px; right: 10px;
+  font-size: 14px; font-weight: 900;
+  color: var(--red);
+  opacity: .85;
+}
 
 /* 判分横幅 */
 .result-banner {
@@ -572,21 +600,26 @@ h1, h2, h3, .hs-num, .stat-card .num { font-family: "Varela Round", "Nunito Sans
   position: fixed; inset: 0; z-index: 200;
   background: rgba(10, 16, 24, .55);
   backdrop-filter: blur(3px);
-  display: flex; align-items: flex-end; justify-content: center;
+  display: flex; align-items: center; justify-content: center;
+  padding: 20px;
   animation: fadeIn .2s ease;
 }
 @keyframes fadeIn { from { opacity: 0; } to { opacity: 1; } }
 .sheet {
   width: 100%; max-width: 480px;
+  max-height: 84vh;
+  overflow-y: auto;
   background: var(--card);
-  border-radius: 20px 20px 0 0;
-  padding: 18px 18px calc(22px + var(--safe-bottom));
+  border-radius: 20px;
+  padding: 18px 18px 22px;
   animation: sheetUp .25s ease;
-  box-shadow: 0 -10px 40px rgba(0, 0, 0, .25);
+  box-shadow: 0 18px 60px rgba(0, 0, 0, .35);
+  border: 1px solid var(--border);
 }
-@keyframes sheetUp { from { transform: translateY(60px); opacity: .6; } to { transform: none; opacity: 1; } }
+@keyframes sheetUp { from { transform: translateY(24px) scale(.97); opacity: .5; } to { transform: none; opacity: 1; } }
 .sheet-head { display: flex; align-items: center; gap: 10px; margin-bottom: 16px; }
 .sheet-head b { font-size: 16px; }
+.sheet-count { font-size: 11.5px; color: var(--text-3); background: var(--bg-soft); border-radius: 8px; padding: 2px 8px; }
 .sheet-close {
   margin-left: auto; border: none; background: var(--bg-soft);
   width: 30px; height: 30px; border-radius: 9px;
@@ -701,6 +734,23 @@ textarea.field { resize: vertical; line-height: 1.6; }
 .answer-box .ab-cache { color: var(--text-3); font-size: 11px; margin-left: 4px; }
 .answer-box .ab-err { color: var(--red); }
 .sheet-hint { margin-left: auto; color: var(--text-3); font-size: 11.5px; }
+
+/* ---------- 成绩与解析：悬浮答题卡按钮（长卷滚动时始终可见） ---------- */
+.review-fab {
+  position: fixed; right: 16px; bottom: calc(76px + var(--safe-bottom, 0px));
+  z-index: 150;
+  display: flex; align-items: center; gap: 6px;
+  padding: 12px 18px;
+  border: none; border-radius: 999px;
+  background: linear-gradient(135deg, #8b5cf6, #6d28d9);
+  color: #fff; font-size: 14px; font-weight: 700;
+  cursor: pointer;
+  box-shadow: 0 8px 24px rgba(109, 40, 217, .45);
+  transition: transform .12s ease, box-shadow .12s ease;
+}
+.review-fab:active { transform: scale(.95); box-shadow: 0 4px 14px rgba(109, 40, 217, .4); }
+/* review 页无底部导航：按钮更贴近底部 */
+#view.no-bottom .review-fab { bottom: calc(20px + var(--safe-bottom, 0px)); }
 @media (prefers-reduced-motion: reduce) {
   *, *::before, *::after { animation-duration: .01ms !important; transition-duration: .01ms !important; }
 }

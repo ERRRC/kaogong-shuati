@@ -64,7 +64,7 @@ db.exec(`
     SELECT id, subject, subjectName, category, name, questionCount, difficulty, chapters FROM tiku.papers;
   CREATE INDEX idx_papers_subject ON papers(subjectName, category);
 `);
-// questions：去掉全空列 source/analysis/analysisHtml 与前端不用的 questionType/optionType/material/hasVideo
+// questions：去掉全空列 source/analysisHtml 与前端不用的 questionType/optionType/material/hasVideo；保留 analysis（官方解析纯文本，2026-08 已补爬入库）
 db.exec(`
   CREATE TABLE questions (
     id INTEGER PRIMARY KEY,
@@ -77,10 +77,11 @@ db.exec(`
     options TEXT,
     answer TEXT,
     answerIndex INTEGER,
-    difficulty INTEGER
+    difficulty INTEGER,
+    analysis TEXT
   );
-  INSERT INTO questions (id, questionId, paperId, chapter, type, content, contentHtml, options, answer, answerIndex, difficulty)
-    SELECT id, questionId, paperId, chapter, type, content, contentHtml, options, answer, answerIndex, difficulty FROM tiku.questions;
+  INSERT INTO questions (id, questionId, paperId, chapter, type, content, contentHtml, options, answer, answerIndex, difficulty, analysis)
+    SELECT id, questionId, paperId, chapter, type, content, contentHtml, options, answer, answerIndex, difficulty, analysis FROM tiku.questions;
   CREATE INDEX idx_questions_qid ON questions(questionId);
   CREATE INDEX idx_questions_paper ON questions(paperId);
   CREATE INDEX idx_questions_chapter ON questions(chapter);

@@ -95,6 +95,23 @@ pdb.exec(`
   );
 `);
 
+// ---------- 使用统计埋点库（stats.db） ----------
+// 事件带"发生时的原始时间戳 ts"，服务端按 ts 聚合 DAU/MAU（补报不影响准确性）；
+// install_id 由客户端生成（UUID，永久不变），COUNT(DISTINCT install_id) 即"人数"。
+const STATS_DB = path.join(__dirname, 'stats.db');
+const sdb = new DatabaseSync(STATS_DB);
+sdb.exec(`
+  CREATE TABLE IF NOT EXISTS telemetry_events (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    install_id TEXT NOT NULL,
+    event TEXT NOT NULL,
+    ts INTEGER NOT NULL,
+    data TEXT DEFAULT ''
+  );
+  CREATE INDEX IF NOT EXISTS idx_tele_install ON telemetry_events(install_id);
+  CREATE INDEX IF NOT EXISTS idx_tele_ts ON telemetry_events(ts);
+`);
+
 // ---------- 工具 ----------
 const json = (res, code, data) => {
   res.writeHead(code, { 'Content-Type': 'application/json; charset=utf-8' });
@@ -187,9 +204,11 @@ function checkAnswer(q, selected) {
   const opts = JSON.parse(q.options || '[]');
   const sel = (Array.isArray(selected) ? selected : [selected]).map(Number);
   const ans = String(q.answer ?? '').trim();
-  // 多选1：JSON 数组（如 "[0,1,3]"）
+  // 多选1：JSON 数组（如 "[0,1,3]"；兼容双层 JSON "[[2,3]]"）
   if (ans.startsWith('[')) {
-    const correct = JSON.parse(ans).map(Number);
+    let parsed = JSON.parse(ans);
+    if (Array.isArray(parsed) && parsed.length && Array.isArray(parsed[0])) parsed = parsed[0];
+    const correct = parsed.map(Number);
     const ok = correct.length === sel.length && correct.every((v) => sel.includes(v));
     return { ok, correct, selected: sel, correctText: correct.map((i) => opts[i]).filter(Boolean) };
   }
@@ -227,7 +246,7 @@ const qPaperById = db.prepare(
   "SELECT id, subjectName, category, name, questionCount, difficulty, chapters FROM papers WHERE id = ?"
 );
 const qQuestionsByPaper = db.prepare(
-  "SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty FROM questions q WHERE q.paperId = ? ORDER BY q.id"
+  "SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis FROM questions q WHERE q.paperId = ? ORDER BY q.id"
 );
 const qQuestionById = db.prepare(
   "SELECT questionId, paperId, chapter, type, content, contentHtml, options, answer, answerIndex, difficulty, analysis FROM questions WHERE questionId = ? LIMIT 1"
@@ -236,10 +255,10 @@ const qChaptersBySubject = db.prepare(
   "SELECT DISTINCT q.chapter FROM questions q JOIN papers p ON p.id = q.paperId WHERE p.subjectName = ? AND q.chapter != '' ORDER BY q.chapter"
 );
 const qRandomByChapter = db.prepare(
-  "SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty FROM questions q JOIN papers p ON p.id = q.paperId WHERE p.subjectName = ? AND q.chapter = ? ORDER BY RANDOM() LIMIT ?"
+  "SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis FROM questions q JOIN papers p ON p.id = q.paperId WHERE p.subjectName = ? AND q.chapter = ? ORDER BY RANDOM() LIMIT ?"
 );
 const qRandomBySubject = db.prepare(
-  "SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty FROM questions q JOIN papers p ON p.id = q.paperId WHERE p.subjectName = ? ORDER BY RANDOM() LIMIT ?"
+  "SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis FROM questions q JOIN papers p ON p.id = q.paperId WHERE p.subjectName = ? ORDER BY RANDOM() LIMIT ?"
 );
 // 真题/模拟题过滤（mock: '0'=真题  '1'=模拟题  undefined=不限）
 function mockCond(mock) {
@@ -279,7 +298,7 @@ const SUB_KEYWORDS = [
   { name: '科技常识', keys: ['科技', '科学'] },
   { name: '常识综合', keys: ['常识', '公共基础', '基本常识', '国情', '地理', '生活'] },
   { name: '言语综合', keys: ['言语'] },
-  { name: '判断综合', keys: ['判断', '推理', '知觉'] },
+  { name: '判断综合', keys: ['判断', '推理'] },
   { name: '数量综合', keys: ['数量', '数理', '计算'] },
 ];
 function mapChapterSub(name) {
@@ -355,7 +374,7 @@ function randomQuestions(subject, chapters, n, mock) {
   }
   const sel = picks.slice(0, n);
   const qs = db.prepare(
-    `SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty
+    `SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis
      FROM questions q WHERE q.id IN (${sel.map(() => '?').join(',')})`
   ).all(...sel);
   // 保持随机顺序
@@ -377,6 +396,7 @@ function toQuestion(q) {
     answer: q.answer,
     answerIndex: q.answerIndex,
     difficulty: q.difficulty,
+    analysis: q.analysis ?? null,
   };
 }
 
@@ -412,7 +432,7 @@ function enrichGroups(rows, subject) {
   const allIds = [...new Set([...qids, ...[...groupMembers.values()].flat()])];
   let qs = [];
   if (allIds.length) {
-    qs = db.prepare(`SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty FROM questions q WHERE q.questionId IN (${allIds.map(() => '?').join(',')}) GROUP BY q.questionId`).all(...allIds);
+    qs = db.prepare(`SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis FROM questions q WHERE q.questionId IN (${allIds.map(() => '?').join(',')}) GROUP BY q.questionId`).all(...allIds);
   }
   // 卷内顺序：按 paperId + id（导入顺序）
   const orderOf = new Map(qs.map((q) => [q.questionId, q.id]));
@@ -1182,7 +1202,7 @@ const server = http.createServer(async (req, res) => {
             ).all(...(sub === '全部' ? [group, subject, n] : [group, sub, subject, n])).map((r) => r.question_id);
             if (!ids.length) return json(res, 200, []);
             const qs = db.prepare(
-              `SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty
+              `SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis
                FROM questions q WHERE q.questionId IN (${ids.map(() => '?').join(',')}) GROUP BY q.questionId`
             ).all(...ids);
             return json(res, 200, trimToMax(enrichGroups(qs, subject), max));
@@ -1432,7 +1452,15 @@ const server = http.createServer(async (req, res) => {
           correct == null ? null : (correct ? 1 : 0),
           costMs ?? 0,
         );
-        return json(res, 200, { ok: true, id: r.lastInsertRowid });
+        // 错题自动移除：客观题累计做对 3 次（按不同日期计，避免同日多次去重口径不一致）→ 错题记录软删除（archived=1，统计历史保留）
+        // 只针对行测/职测客观题（错题本收录范围），主观题（correct=null）不参与
+        if (correct === true) {
+          const okDays = pdb.prepare('SELECT COUNT(DISTINCT date(created_at)) n FROM practice_records WHERE question_id = ? AND is_correct = 1').get(questionId).n;
+          if (okDays >= 3) {
+            pdb.prepare('UPDATE practice_records SET archived = 1 WHERE question_id = ? AND is_correct = 0 AND archived = 0').run(questionId);
+          }
+        }
+        return json(res, 200, { ok: true, id: r.lastInsertRowid, removedFromWrong: correct === true });
       }
       // 统计（学习进度 AI 的数据源）：总数/正确率/按章节/近7天
       // 参数: subject=真实科目(经 question_id 关联 tiku 判定); days=30|180|365 或 from+to(YYYY-MM-DD); 缺省不过滤
@@ -1453,9 +1481,9 @@ const server = http.createServer(async (req, res) => {
           SELECT COUNT(*) c, SUM(is_correct) ok, SUM(is_correct IS NOT NULL) graded FROM practice_records
           WHERE 1=1 ${tikuCond} ${timeCond} ${timeCond2}
         `).get(...tikuParams, ...timeParams, ...timeParams2);
-        // 错题 = 严格答错（is_correct=0），与错题本口径一致（主观题 is_correct=NULL 不计入）
+        // 错题 = 严格答错（is_correct=0），与错题本口径一致（主观题 is_correct=NULL 不计入；archived 已从错题本移除的不计）
         const wrong = pdb.prepare(`
-          SELECT COUNT(*) c FROM practice_records WHERE is_correct = 0
+          SELECT COUNT(*) c FROM practice_records WHERE is_correct = 0 AND archived = 0
           ${tikuCond} ${timeCond} ${timeCond2}
         `).get(...tikuParams, ...timeParams, ...timeParams2).c;
         const byChapter = pdb.prepare(`
@@ -1488,34 +1516,44 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/records/wrong' && req.method === 'GET') {
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 200);
         const offset = Math.max(Number(url.searchParams.get('offset') || 0), 0);
+        const subject = url.searchParams.get('subject');
+        // 错题本只收客观题（公考行测 / 事业编职测）；申论·综应等主观题不进错题本
+        const subjectCond = subject ? 'AND subject = ?' : "AND subject IN ('公务员·行测', '事业编·职测')";
+        const params = subject ? [limit, offset, subject] : [limit, offset];
         const rows = pdb.prepare(`
           SELECT id, question_id, subject, chapter, selected, created_at
-          FROM practice_records WHERE is_correct = 0 AND archived = 0
+          FROM practice_records WHERE is_correct = 0 AND archived = 0 ${subjectCond}
           ORDER BY id DESC LIMIT ? OFFSET ?
-        `).all(limit, offset);
+        `).all(...params);
         const list = rows.map((r) => {
           const q = qQuestionById.get(r.question_id);
+          let myAnswer = r.selected;
+          try { const arr = JSON.parse(r.selected); if (Array.isArray(arr)) myAnswer = arr.slice().sort((a, b) => a - b).join(','); } catch { /* 保持原样 */ }
           return {
             id: r.id,
             questionId: r.question_id,
+            available: !!q,   // 题库中已不存在的题（历史遗留）标记为不可重做
             subject: r.subject,
             chapter: r.chapter,
-            myAnswer: r.selected,
+            myAnswer,
             time: r.created_at,
             content: q ? q.content.slice(0, 80) : null,
             type: q ? q.type : null,
           };
         });
         // 返回总数（标题显示真实错题数）+ 分页游标，前端可"加载更多"
-        const total = pdb.prepare('SELECT COUNT(*) n FROM practice_records WHERE is_correct = 0 AND archived = 0').get().n;
+        const totalParams = subject ? [subject] : [];
+        const total = pdb.prepare(`SELECT COUNT(*) n FROM practice_records WHERE is_correct = 0 AND archived = 0 ${subjectCond}`).get(...totalParams).n;
         return json(res, 200, { list, total, offset, limit, hasMore: offset + list.length < total });
       }
-      // 清空错题（软删除：archived=1，统计历史保留；按 id 单条移除）
+      // 清空错题（软删除：archived=1，统计历史保留；按 id 单条移除；questionId 按题移除；subject 指定时只清该模块）
       if (pathname === '/api/records/wrong' && req.method === 'DELETE') {
         let body = '';
         for await (const chunk of req) body += chunk;
-        const { id } = JSON.parse(body || '{}');
+        const { id, questionId, subject } = JSON.parse(body || '{}');
         if (id) pdb.prepare('UPDATE practice_records SET archived = 1 WHERE id = ?').run(id);
+        else if (questionId) pdb.prepare('UPDATE practice_records SET archived = 1 WHERE question_id = ? AND is_correct = 0 AND archived = 0').run(questionId);
+        else if (subject) pdb.prepare('UPDATE practice_records SET archived = 1 WHERE is_correct = 0 AND subject = ?').run(subject);
         else pdb.prepare('UPDATE practice_records SET archived = 1 WHERE is_correct = 0').run();
         return json(res, 200, { ok: true });
       }
@@ -1768,51 +1806,6 @@ const server = http.createServer(async (req, res) => {
         if (v.error) return json(res, 200, { notice: v.error, text: null });
         return json(res, 200, { notice: '识别完成', text: v.content });
       }
-      // ---- 学习进度顾问：基于做题统计出个性化学习建议 ----
-      if (pathname === '/api/ai/progress' && req.method === 'POST') {
-        const agent = getAgent('progress-coach');
-        if (!agent || !agent.api_key) {
-          return json(res, 200, { notice: '学习进度顾问尚未配置 api_key，请到「AI 设置」页面填写后重试。', content: null });
-        }
-        let body = '';
-        for await (const chunk of req) body += chunk;
-        let params = {};
-        try { params = JSON.parse(body || '{}'); } catch {}
-        const subject = params.subject;
-        const days = Number(params.range) || 0;
-        const from = params.from, to = params.to;
-        const tikuCond = subject ? "AND practice_records.question_id IN (SELECT tq.questionId FROM tiku.questions tq JOIN tiku.papers tp ON tp.id = tq.paperId WHERE tp.subjectName = ?)" : '';
-        const tikuParams = subject ? [subject] : [];
-        const timeCond = days > 0
-          ? `AND date(created_at) >= date('now','localtime','-${days} days')`
-          : (from ? `AND date(created_at) >= date(?)` : '');
-        const timeParams = from ? [from] : [];
-        const timeCond2 = to ? `AND date(created_at) <= date(?)` : '';
-        const timeParams2 = to ? [to] : [];
-        const where = `WHERE 1=1 ${tikuCond} ${timeCond} ${timeCond2}`;
-        const wParams = [...tikuParams, ...timeParams, ...timeParams2];
-        // 组装学习数据（与 /api/records/stats 同源，subject+时间过滤）
-        const total = pdb.prepare(`SELECT COUNT(*) c, SUM(is_correct) ok FROM practice_records ${where}`).get(...wParams);
-        const byChapter = pdb.prepare(`
-          SELECT chapter, COUNT(*) c, SUM(is_correct) ok
-          FROM practice_records ${where} GROUP BY chapter ORDER BY c DESC LIMIT 12
-        `).all(...wParams);
-        const last7 = pdb.prepare(`
-          SELECT date(created_at) d, COUNT(*) c, SUM(is_correct) ok
-          FROM practice_records WHERE created_at >= datetime('now','localtime','-7 days') ${tikuCond}
-          GROUP BY date(created_at) ORDER BY d
-        `).all(...tikuParams);
-        const dataText = [
-          `【科目】${subject || '全部'}`,
-          `【时间范围】${days > 0 ? `最近 ${days} 天` : (from && to ? `${from} 至 ${to}` : '全部')}`,
-          `【做题总量】${total.c || 0} 题（正确 ${total.ok || 0}，正确率 ${total.c ? Math.round((total.ok / total.c) * 100) : 0}%）`,
-          `【各模块】${byChapter.map((c) => `${c.chapter}: ${c.c}题/${c.ok ? Math.round((c.ok / c.c) * 100) : 0}%`).join('，') || '暂无数据'}`,
-          `【近7天】${last7.map((d) => `${d.d.slice(5)}: ${d.c}题`).join('，') || '暂无数据'}`,
-        ].join('\n');
-        const r = await callAgent(agent, dataText);
-        if (r.error) return json(res, 200, { notice: r.error, content: null });
-        return json(res, 200, { notice: '分析完成', content: r.content });
-      }
       // ---- 申论材料：查缓存 / 懒提取（PDF → Chrome 渲染 → GLM OCR） ----
       const findPdfForPaper = (paperId) => {
         const p = db.prepare('SELECT subjectName, category, name FROM papers WHERE id = ?').get(paperId);
@@ -1920,10 +1913,82 @@ const server = http.createServer(async (req, res) => {
         if (r.error) return json(res, 200, { notice: r.error, score: null });
         return json(res, 200, { notice: '批改完成', score: null, result: r.content, fullScore });
       }
+      // ---- 使用统计：接收埋点上报（带 CORS：App 离线模式跨域直报；事件 ts 为发生时原始时间戳） ----
+      if (pathname === '/api/telemetry') {
+        console.log(`[telemetry] 收到请求: ${req.method} ${req.url} from ${req.socket.remoteAddress || 'unknown'}`);
+        const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
+        if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
+        if (req.method !== 'POST') return err(res, 405, 'method not allowed');
+        let raw = '';
+        for await (const chunk of req) raw += chunk;
+        let body = {};
+        try { body = JSON.parse(raw || '{}'); } catch { return err(res, 400, 'bad json'); }
+        const events = Array.isArray(body.events) ? body.events : (body.event ? [body] : []);
+        console.log(`[telemetry] 事件数=${events.length} 首个=${events[0] ? events[0].event + '/' + String(events[0].install_id || '').slice(0, 8) : '无'}`);
+        const stmt = sdb.prepare('INSERT INTO telemetry_events (install_id, event, ts, data) VALUES (?, ?, ?, ?)');
+        let saved = 0;
+        for (const ev of events) {
+          const id = String(ev.install_id || '').slice(0, 64);
+          const name = String(ev.event || '').slice(0, 64);
+          const ts = Number(ev.ts);
+          if (!id || !name || !Number.isFinite(ts)) continue;
+          stmt.run(id, name, Math.floor(ts), JSON.stringify(ev.data ?? {}).slice(0, 2000));
+          saved++;
+        }
+        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ...cors });
+        return res.end(JSON.stringify({ ok: true, saved }));
+      }
       return err(res, 404, '接口不存在');
     } catch (e) {
       return err(res, 500, `服务器错误: ${e.message}`);
     }
+  }
+
+  // ---- 使用统计管理页（纯 HTML 自包含；访问 http://<host>:<port>/stats） ----
+  if (pathname === '/stats' && req.method === 'GET') {
+    const dayStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
+    const todayTs = dayStart();
+    const monthTs = (() => { const d = new Date(todayTs); d.setDate(1); return d.getTime(); })();
+    // 排除测试设备（install_id 以 test- 开头），避免自测数据污染统计
+    const NOT_TEST = "install_id NOT LIKE 'test-%'";
+    const totalUsers = sdb.prepare(`SELECT COUNT(DISTINCT install_id) c FROM telemetry_events WHERE ${NOT_TEST}`).get().c;
+    const dau = sdb.prepare(`SELECT COUNT(DISTINCT install_id) c FROM telemetry_events WHERE ts >= ? AND ${NOT_TEST}`).get(todayTs).c;
+    const mau = sdb.prepare(`SELECT COUNT(DISTINCT install_id) c FROM telemetry_events WHERE ts >= ? AND ${NOT_TEST}`).get(monthTs).c;
+    const totalEvents = sdb.prepare(`SELECT COUNT(*) c FROM telemetry_events WHERE ${NOT_TEST}`).get().c;
+    const last7 = sdb.prepare(`SELECT date(ts/1000,'unixepoch','localtime') d, COUNT(DISTINCT install_id) u, COUNT(*) n FROM telemetry_events WHERE ts >= ? AND ${NOT_TEST} GROUP BY d ORDER BY d`).all(Date.now() - 6 * 86400000);
+    const byEvent = sdb.prepare(`SELECT event, COUNT(*) n, COUNT(DISTINCT install_id) u FROM telemetry_events WHERE ${NOT_TEST} GROUP BY event ORDER BY n DESC`).all();
+    const recent = sdb.prepare(`SELECT install_id, event, ts, data FROM telemetry_events WHERE ${NOT_TEST} ORDER BY id DESC LIMIT 30`).all();
+    const escH = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+    const rows7 = last7.map((r) => `<tr><td>${escH(r.d)}</td><td>${r.u}</td><td>${r.n}</td></tr>`).join('') || '<tr><td colspan="3" style="color:#999">暂无数据</td></tr>';
+    const rowsE = byEvent.map((r) => `<tr><td>${escH(r.event)}</td><td>${r.n}</td><td>${r.u}</td></tr>`).join('') || '<tr><td colspan="3" style="color:#999">暂无数据</td></tr>';
+    const rowsR = recent.map((r) => `<tr><td title="${escH(r.install_id)}">${escH(r.install_id.slice(0, 8))}…</td><td>${escH(r.event)}</td><td>${new Date(r.ts).toLocaleString('zh-CN')}</td><td>${escH(JSON.stringify(JSON.parse(r.data || '{}'))).slice(0, 80)}</td></tr>`).join('');
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    return res.end(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>使用统计 · 考公刷题</title><style>
+      body{font-family:system-ui,-apple-system,'Microsoft YaHei',sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
+      h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:28px 0 10px;color:#94a3b8}
+      .sub{color:#64748b;font-size:13px;margin-bottom:16px}
+      .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
+      .card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px}
+      .card .v{font-size:26px;font-weight:700;color:#38bdf8}.card .k{font-size:12px;color:#94a3b8;margin-top:4px}
+      table{width:100%;border-collapse:collapse;font-size:13px;background:#1e293b;border-radius:10px;overflow:hidden}
+      th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #334155}th{color:#94a3b8;font-weight:500;background:#24344d}
+      tr:last-child td{border-bottom:none}
+    </style></head><body>
+      <h1>📊 使用统计</h1>
+      <div class="sub">数据从统计功能部署日起累计；人数 = 去重设备 ID（install_id），同一手机/浏览器只算 1 人</div>
+      <div class="cards">
+        <div class="card"><div class="v">${totalUsers}</div><div class="k">累计使用人数</div></div>
+        <div class="card"><div class="v">${dau}</div><div class="k">今日活跃 DAU</div></div>
+        <div class="card"><div class="v">${mau}</div><div class="k">本月活跃 MAU</div></div>
+        <div class="card"><div class="v">${totalEvents}</div><div class="k">累计事件数</div></div>
+      </div>
+      <h2>近 7 天活跃趋势</h2>
+      <table><tr><th>日期</th><th>活跃人数</th><th>事件数</th></tr>${rows7}</table>
+      <h2>事件排行（功能使用量）</h2>
+      <table><tr><th>事件</th><th>次数</th><th>人数</th></tr>${rowsE}</table>
+      <h2>最近事件流水</h2>
+      <table><tr><th>设备</th><th>事件</th><th>时间</th><th>附加数据</th></tr>${rowsR}</table>
+    </body></html>`);
   }
 
   // ---- 静态文件 ----

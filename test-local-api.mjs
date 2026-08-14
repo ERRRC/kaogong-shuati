@@ -45,24 +45,27 @@ await api.records.toggleFavorite(favQ.id, {}); // 再加回，供后续对照
 
 // ---- 做题记录 ----
 const q1 = api.query.questionById(favQ.id);
-// 先提交错误，再同日重复提交正确 → 应去重更新为正确（保留最新状态）
+// 先提交错误，再同日重复提交正确 → 错题保护：保留错题记录 + 新增正确记录（累计做对 3 次才移除）
 await api.records.addRecord({ questionId: q1.id, subject: '公务员·行测', chapter: q1.chapter, type: q1.type, selected: [], correct: false, costMs: 3000, paperId: q1.paperId });
 await api.records.addRecord({ questionId: q1.id, subject: '公务员·行测', chapter: q1.chapter, type: q1.type, selected: [q1.answerIndex], correct: true, costMs: 5000, paperId: q1.paperId });
-const recs = await store.getAll('records');
-ok('records 同题同日去重', recs.length === 1, `(${recs.length} 条)`);
-ok('records 重复时更新', recs[0].is_correct === 1 && recs[0].cost_ms === 5000);
+let recs = await store.getAll('records');
+ok('records 错题保护（错→对保留错题记录）', recs.length === 2 && recs.some((r) => r.is_correct === 0) && recs.some((r) => r.is_correct === 1), `(${recs.length} 条)`);
+// 同日再答对 → 正确记录去重为 1 条，错题记录仍保留
+await api.records.addRecord({ questionId: q1.id, subject: '公务员·行测', chapter: q1.chapter, type: q1.type, selected: [q1.answerIndex], correct: true, costMs: 6000, paperId: q1.paperId });
+recs = await store.getAll('records');
+ok('records 正确记录同日去重', recs.length === 2 && recs.filter((r) => r.is_correct === 1).length === 1, `(${recs.length} 条)`);
 
 const q2 = api.query.questionById(pr[1].id);
 await api.records.addRecord({ questionId: q2.id, subject: '公务员·行测', chapter: q2.chapter, type: q2.type, selected: [], correct: false, costMs: 8000, paperId: q2.paperId });
 
 const st = await api.records.stats();
-ok('stats 计数', st.total === 2 && st.done === 1 && st.wrong === 1, JSON.stringify(st));
+ok('stats 计数', st.total === 3 && st.done === 1 && st.wrong === 2, JSON.stringify(st));
 
 const w = await api.records.wrong({ limit: 10 });
-ok('wrong 去重列表', w.total === 1 && w.list[0].id === q2.id && typeof w.list[0].content === 'string', JSON.stringify(w.list.map((x) => x.id)));
+ok('wrong 去重列表', w.total === 2 && typeof w.list[0].content === 'string', JSON.stringify(w.list.map((x) => x.id)));
 
 const rec = await api.records.recent({ limit: 5 });
-ok('recent 时间倒序且含字段', rec.length === 2 && 'correct' in rec[0] && rec.every((x) => x.questionId === q1.id || x.questionId === q2.id), JSON.stringify(rec.map((x) => x.questionId)));
+ok('recent 时间倒序且含字段', rec.length === 3 && 'correct' in rec[0] && rec.every((x) => x.questionId === q1.id || x.questionId === q2.id), JSON.stringify(rec.map((x) => x.questionId)));
 
 // ---- aggregateStats 直测（用真实题 id 保证索引映射存在） ----
 const xcReal = api.query.practice('公务员·行测', { n: 1 })[0];

@@ -20,8 +20,10 @@ export function createLocalHandler({ query, records, store, ai }) {
       rows = rows.filter((r) => r.created_at >= f && r.created_at < t);
     }
     const total = rows.length;
-    const correct = rows.filter((r) => r.is_correct).length;
-    const wrong = total - correct;
+    const correct = rows.filter((r) => r.is_correct === 1).length;
+    const graded = rows.filter((r) => r.is_correct === 1 || r.is_correct === 0).length;
+    // 错题 = 严格答错（is_correct=0），与 server /api/records/stats 同构；主观题（NULL）不计入错题
+    const wrong = rows.filter((r) => r.is_correct === 0).length;
 
     // byChapter：按章节聚合（与 server 同构：{chapter, c, ok}）
     const byChapterMap = new Map();
@@ -57,7 +59,7 @@ export function createLocalHandler({ query, records, store, ai }) {
     }
     const daily = [...dailyMap.values()].sort((a, b) => (a.d < b.d ? 1 : -1));
 
-    return { total, correct, wrong, rate: total ? Math.round((correct / total) * 100) : 0, byChapter, last7, daily };
+    return { total, correct, wrong, rate: graded ? Math.round((correct / graded) * 100) : 0, byChapter, last7, daily };
   }
 
   /**
@@ -121,11 +123,18 @@ export function createLocalHandler({ query, records, store, ai }) {
       });
     }
     if (route === 'GET /records/recent') return records.recent({ limit: Number(qs.get('limit') || 20) });
-    if (route === 'GET /records/wrong') return records.wrong({ limit: Number(qs.get('limit') || 50), offset: Number(qs.get('offset') || 0) });
+    if (route === 'GET /records/wrong') return records.wrong({ limit: Number(qs.get('limit') || 50), offset: Number(qs.get('offset') || 0), subject: qs.get('subject') || undefined });
     if (route === 'DELETE /records/wrong') {
-      // 清空错题本（与 server 同构：全清）
+      // 与 server 同构：body.id 存在时只删单条；body.questionId 按题删；body.subject 指定时只清该模块；否则清空错题本
+      // 注意：只删除错题记录（is_correct = 0），保留正确题记录与学习统计
+      if (body && body.id != null) {
+        await store.deleteBy('records', 'id', body.id);
+        return { ok: true };
+      }
       const all = await store.getAll('records');
-      for (const r of all) await store.deleteBy('records', 'id', r.id);
+      for (const r of all) {
+        if (!r.is_correct && (!body?.questionId || r.question_id === body.questionId) && (!body?.subject || r.subject === body.subject)) await store.deleteBy('records', 'id', r.id);
+      }
       return { ok: true };
     }
     if (route === 'GET /favorites') return records.favorites({ limit: Number(qs.get('limit') || 50), offset: Number(qs.get('offset') || 0) });
@@ -148,11 +157,6 @@ export function createLocalHandler({ query, records, store, ai }) {
     }
     if (route === 'POST /ai/explain') {
       const r = await ai.explain(body);
-      if (r.error) return { notice: r.error, content: null };
-      return r;
-    }
-    if (route === 'POST /ai/progress') {
-      const r = await ai.progress(body);
       if (r.error) return { notice: r.error, content: null };
       return r;
     }

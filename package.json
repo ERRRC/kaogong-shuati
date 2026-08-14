@@ -12,6 +12,9 @@
     "dry-run": "node crawl.js --dry-run",
     "test:encrypt": "node lib/encrypt.js --self-test",
     "test": "node verify-db.mjs && node e2e-check.mjs",
-    "test:local": "node --test test-local-api.mjs test-local-queries.mjs test-random-practice-count.mjs test-local-ai.mjs test-local-handler.mjs"
+    "test:local": "node --test test-local-api.mjs test-local-queries.mjs test-random-practice-count.mjs test-local-ai.mjs test-local-handler.mjs test-local-fixes.mjs test-native-engine.mjs"
+  },
+  "dependencies": {
+    "sharp": "^0.35.3"
   }
 }
