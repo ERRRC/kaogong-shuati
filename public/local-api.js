@@ -151,8 +151,8 @@ export function createRecordsApi(store, tiku, onChanged) {
     /** 错题本（与 /api/records/wrong 同构：答错题去重 + 分页；只收客观题） */
     async wrong({ limit = 50, offset = 0, subject } = {}) {
       let rows = (await store.getAll('records')).filter((r) => r.is_correct === 0);
-      // 错题本只收录客观题（公考行测 / 事业编职测）；申论·综应等主观题不进错题本
-      const WRONG_SUBJECTS = new Set(['公务员·行测', '事业编·职测']);
+      // 错题本只收录客观题（公考行测 / 事业编职测 / 自定义题库）；申论·综应等主观题不进错题本
+      const WRONG_SUBJECTS = new Set(['公务员·行测', '事业编·职测', '自定义']);
       rows = rows.filter((r) => WRONG_SUBJECTS.has(r.subject));
       if (subject) rows = rows.filter((r) => r.subject === subject);
       rows.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
@@ -160,9 +160,18 @@ export function createRecordsApi(store, tiku, onChanged) {
       const uniq = rows.filter((r) => (seen.has(r.question_id) ? false : (seen.add(r.question_id), true)));
       const total = uniq.length;
       const page = uniq.slice(offset, offset + limit);
+      // 自定义题内容从 IndexedDB 取（custom- 前缀）
+      const customRows = (await store.getAll('custom_questions')).filter((x) => x.prompt);
+      const customOf = new Map(customRows.map((x) => [Number(x.id), x]));
       const list = [];
       for (const r of page) {
-        const q = tiku.get('SELECT content, contentHtml, type FROM questions WHERE questionId = ? LIMIT 1', r.question_id);
+        let q = null;
+        if (String(r.question_id).startsWith('custom-')) {
+          const cr = customOf.get(Number(String(r.question_id).replace(/^custom-/, '')));
+          if (cr) q = { content: cr.prompt, type: 'custom' };
+        } else {
+          q = tiku.get('SELECT content, contentHtml, type FROM questions WHERE questionId = ? LIMIT 1', r.question_id);
+        }
         list.push({
           id: r.question_id,
           questionId: r.question_id,   // 与 server /api/records/wrong 同构（app.js 点开用此字段）

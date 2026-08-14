@@ -18,12 +18,18 @@
 'use strict';
 
 const DEFAULT_DB = 'kaogong-app';
-const DEFAULT_VERSION = 1;
-const STORES = ['records', 'favorites'];
+const DEFAULT_VERSION = 2; // 2：新增 custom_batches / custom_questions（自定义题库，2026-08-15）
+const STORES = ['records', 'favorites', 'custom_batches', 'custom_questions'];
 
 function newId() {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') return crypto.randomUUID();
   return `${Date.now()}-${Math.random().toString(36).slice(2, 10)}`;
+}
+
+/** 数字自增 id（custom_batches / custom_questions 用，与服务端 AUTOINCREMENT 语义一致） */
+async function nextNumericId(getAll, kind) {
+  const rows = await getAll(kind);
+  return rows.reduce((m, r) => Math.max(m, Number(r && r.id) || 0), 0) + 1;
 }
 
 /**
@@ -83,7 +89,7 @@ export function createIdbStore(opts = {}) {
     });
   }
 
-  /** 取行 key：records 用 id（缺失自动生成），favorites 用 question_id */
+  /** 取行 key：records 用 id（缺失自动生成），favorites 用 question_id，custom_* 用数字自增 id */
   function rowKey(kind, row) {
     if (kind === 'records') {
       if (row.id == null) row.id = newId();
@@ -92,6 +98,10 @@ export function createIdbStore(opts = {}) {
     if (kind === 'favorites') {
       if (row.question_id == null) throw new Error('favorites 行缺少 question_id');
       return String(row.question_id);
+    }
+    if (kind === 'custom_batches' || kind === 'custom_questions') {
+      if (row.id == null) throw new Error(`${kind} 行缺少 id（应先分配数字自增 id）`);
+      return Number(row.id);
     }
     throw new Error(`未知存储 kind: ${kind}`);
   }
@@ -120,6 +130,11 @@ export function createIdbStore(opts = {}) {
       await tx(kind, 'readwrite', (s) => {
         s.put({ ...row }, key);
       });
+    },
+
+    /** 分配数字自增 id（custom_batches / custom_questions） */
+    async nextId(kind) {
+      return nextNumericId(getAll, kind);
     },
 
     async deleteBy(kind, key, value) {
