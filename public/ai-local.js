@@ -379,13 +379,22 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
     },
 
     /** POST /api/ai/explain — 单题 AI 解析（带本地缓存） */
-    async explain({ questionId, selected, correct }) {
+    async explain({ questionId, selected, correct, questionData }) {
       const key = `explain|${questionId}|${selected || ''}|${correct || ''}`;
       const cached = await cacheGet(key);
       if (cached) return { content: cached, cached: true };
 
       let q = null;
-      if (tiku) {
+      let customMaterial = '';
+      if (questionData && String(questionData.content || questionData.prompt || '').trim()) {
+        // 自定义题：题面由前端直接携带
+        q = {
+          content: String(questionData.content || questionData.prompt || '').trim(),
+          options: JSON.stringify(Array.isArray(questionData.options) ? questionData.options : []),
+          answer: String(questionData.answer ?? ''),
+        };
+        customMaterial = String(questionData.material || '').trim();
+      } else if (tiku) {
         try {
           q = tiku.get('SELECT * FROM questions WHERE questionId = ?', questionId);
         } catch {
@@ -402,7 +411,11 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
       });
       // 材料题：把材料原文带进 prompt（数据在材料里，题干只是问题）
       let matImgCount = 0;
-      if (tiku) {
+      if (customMaterial) {
+        let matText = stripHtml(customMaterial).trim();
+        if (matText.length > 6000) matText = matText.slice(0, 6000) + '\n…（材料过长已截断）';
+        lines.push(`材料：\n${matText}`);
+      } else if (tiku) {
         try {
           const mm = tiku.get('SELECT material_id FROM q_material_map WHERE question_id = ? LIMIT 1', questionId);
           if (mm && mm.material_id != null) {
@@ -484,7 +497,7 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
         console.warn('[explain-img] imageNote=' + (imageNote ? imageNote.slice(0, 60) : '空'));
       } catch { /* 图片转写失败不阻塞文字解析 */ }
       if (imageNote) lines.push(`题目图片内容（AI 识图转写）：\n${imageNote.slice(0, 4000)}`);
-      lines.push(`正确答案：${q.answer}`);
+      lines.push(`正确答案：${q.answer || '（无标准答案）'}`);
       if (selected) lines.push(`我的作答：${selected}`);
       const agent = loadAgents(defaults).find((x) => x.role === 'xingce-explainer') || loadAgents(defaults)[0];
       if (!agent) return { error: 'AI 设置不可用' };

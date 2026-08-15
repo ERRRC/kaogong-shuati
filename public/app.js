@@ -935,6 +935,13 @@ function customRenderPreview(qs, defaultName) {
       </table></div>
       <div class="import-confirm">
         <input type="text" id="import-name" placeholder="批次名称" value="${esc(defaultName)}">
+        <select id="import-subject" title="这批题属于哪个科目（影响刷题统计与错题本归属）">
+          <option value="">科目：不限（归入「自定义」）</option>
+          <option value="行测">行测</option>
+          <option value="职测">职测</option>
+          <option value="综应">综应</option>
+          <option value="申论">申论</option>
+        </select>
         <button class="btn primary" id="import-ok">确认导入</button>
       </div>
     </div>
@@ -944,6 +951,7 @@ function customRenderPreview(qs, defaultName) {
     try {
       const r = await api('/api/custom/import', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({
         name,
+        subject: $('#import-subject').value,
         questions: qs.map((q) => ({ prompt: q.prompt || '', material: q.material || '', options: q.options || [], answer: q.answer || '', answer_index: q.answer_index == null ? -1 : q.answer_index, analysis: q.analysis || '' })),
       }) });
       toast(`已导入「${r.name}」${r.count} 题`);
@@ -2384,7 +2392,19 @@ async function explainReview(q, selected, correct, box, btn) {
     box.innerHTML = '<div class="spinner"></div>';
     const r = await api('/api/ai/explain', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ questionId: q.id, selected, correct }),
+      body: JSON.stringify((() => {
+        const b = { questionId: q.id, selected, correct };
+        if (q.type === 'custom' && (q.id || '').startsWith('custom-')) {
+          b.questionData = {
+            content: q.content || q.prompt || '',
+            material: q.material || '',
+            options: q.options || [],
+            answer: q.answer || '',
+            answerIndex: q.answerIndex != null ? q.answerIndex : -1,
+          };
+        }
+        return b;
+      })()),
     }).catch((e) => ({ notice: e.message }));
     if (r.content) box.innerHTML = `<div class="ab-title">${ico('sparkles', 15)} AI 解析${r.cached ? ' <span style="color:var(--muted);font-size:11px">（缓存）</span>' : ''}</div><div style="white-space:pre-wrap;font-size:13.5px;line-height:1.8">${esc(r.content)}</div>`;
     else box.innerHTML = `<div class="ab-title" style="color:var(--red)">${ico('alert', 15)} ${esc(r.notice || '解析失败')}</div>`;
@@ -2748,7 +2768,19 @@ async function explainQuestion(q, selected, correct, box) {  const btn = $('#btn
     const r = await api('/api/ai/explain', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ questionId: q.id, selected, correct }),
+      body: JSON.stringify((() => {
+        const b = { questionId: q.id, selected, correct };
+        if (q.type === 'custom' && (q.id || '').startsWith('custom-')) {
+          b.questionData = {
+            content: q.content || q.prompt || '',
+            material: q.material || '',
+            options: q.options || [],
+            answer: q.answer || '',
+            answerIndex: q.answerIndex != null ? q.answerIndex : -1,
+          };
+        }
+        return b;
+      })()),
     });
     if (r.content) {
       let html = `<div class="ab-title">${ico('sparkles', 15)} AI 解析${r.cached ? ' <span style="color:var(--muted);font-size:11px">（缓存）</span>' : ''}</div>`;

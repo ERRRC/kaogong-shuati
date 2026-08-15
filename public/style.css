@@ -855,7 +855,10 @@ textarea.field { resize: vertical; line-height: 1.6; }
 .cb-check-wrap { display: flex; align-items: center; }
 .cb-check-wrap input { width: 18px; height: 18px; accent-color: var(--primary); }
 .cb-main { flex: 1; cursor: pointer; min-width: 0; }
-.cb-name { font-weight: 700; color: var(--text); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cb-name { font-weight: 700; color: var(--text); font-size: 15px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center; gap: 8px; }
+.cb-subject { flex: none; font-size: 11px; font-weight: 600; color: var(--primary); background: var(--primary-soft, rgba(124,58,237,.12)); border: 1px solid rgba(124,58,237,.25); border-radius: 999px; padding: 2px 9px; white-space: nowrap; }
+.import-confirm { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.import-confirm select { flex: 0 0 auto; padding: 8px 10px; border-radius: 10px; border: 1px solid var(--border-strong); background: var(--card); color: var(--text); font-size: 13.5px; max-width: 200px; }
 .cb-meta { color: var(--muted); font-size: 12.5px; }
 .cb-actions { display: flex; gap: 6px; flex-wrap: wrap; }
 .mini { font-size: 12.5px; padding: 5px 10px; border-radius: 9px; border: 1px solid var(--border-strong); background: var(--card); color: var(--text-2); cursor: pointer; }

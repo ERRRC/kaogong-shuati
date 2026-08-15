@@ -192,7 +192,8 @@ export function createLocalHandler({ query, records, store, ai }) {
     if (route === 'POST /custom/import') {
       if (!body.name || !Array.isArray(body.questions) || body.questions.length === 0) throw new Error('缺少批次名或题目');
       const bid = await store.nextId('custom_batches');
-      await store.put('custom_batches', { id: bid, name: String(body.name).trim(), created_at: new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-'), updated_at: '' });
+      const subject = String(body.subject || '').trim() || '自定义';
+      await store.put('custom_batches', { id: bid, name: String(body.name).trim(), subject, created_at: new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-'), updated_at: '' });
       for (const q of body.questions) {
         const qid = await store.nextId('custom_questions');
         await store.put('custom_questions', {
@@ -205,7 +206,7 @@ export function createLocalHandler({ query, records, store, ai }) {
           analysis: String(q.analysis ?? ''),
         });
       }
-      return { id: bid, name: String(body.name).trim(), count: body.questions.length };
+      return { id: bid, name: String(body.name).trim(), subject, count: body.questions.length };
     }
     // 批次列表（含题数）
     if (route === 'GET /custom/batches') {
@@ -313,6 +314,7 @@ export function createLocalHandler({ query, records, store, ai }) {
       const batches = await store.getAll('custom_batches');
       const b = batches.find((x) => Number(x.id) === bid);
       if (!b) throw new Error('批次不存在');
+      const bSubj = String(b.subject || '').trim() || '自定义';
       const all = await store.getAll('custom_questions');
       const rows = all.filter((q) => Number(q.batch_id) === bid).sort((a, b) => Number(a.id) - Number(b.id));
       const questions = rows.map((r) => ({
@@ -325,11 +327,11 @@ export function createLocalHandler({ query, records, store, ai }) {
         answerIndex: r.answer_index ?? -1,
         analysis: r.analysis || '',
         type: 'custom',
-        subjectName: '自定义',
+        subjectName: bSubj,
         batchId: bid,
         chapter: b.name,
       }));
-      return { questions, batch: { id: bid, name: b.name } };
+      return { questions, batch: { id: bid, name: b.name, subject: bSubj } };
     }
     // 判分（自定义）：复用 checkAnswer，写 records（subject=自定义，chapter=批次名）
     if (route === 'POST /custom/check') {
@@ -340,7 +342,10 @@ export function createLocalHandler({ query, records, store, ai }) {
       if (!r) throw new Error('题目不存在');
       const fq = { content: r.prompt, material: r.material || '', options: r.options || [], answer: r.answer || '', answerIndex: r.answer_index ?? -1, analysis: r.analysis || '', type: 'custom' };
       const result = checkAnswer(fq, body.selected);
-      await records.addRecord({ questionId: body.questionId, subject: '自定义', chapter: body.chapter || '', type: 'custom', selected: Array.isArray(body.selected) ? body.selected : (body.selected == null ? [] : [body.selected]), correct: result.ok, costMs: 0 });
+      const batches = await store.getAll('custom_batches');
+      const bb = batches.find((x) => Number(x.id) === Number(body.batchId || 0));
+      const subject = (bb && String(bb.subject || '').trim()) || '自定义';
+      await records.addRecord({ questionId: body.questionId, subject, chapter: body.chapter || '', type: 'custom', selected: Array.isArray(body.selected) ? body.selected : (body.selected == null ? [] : [body.selected]), correct: result.ok, costMs: 0 });
       return result;
     }
 

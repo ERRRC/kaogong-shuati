@@ -56,11 +56,14 @@ pdb.exec(`
 `);
 // 兼容已存在的库：补充 archived 列
 try { pdb.exec('ALTER TABLE practice_records ADD COLUMN archived INTEGER DEFAULT 0'); } catch {}
+// 兼容已存在的库：custom_batches 补充 subject 列（旧库无此列）
+try { pdb.exec('ALTER TABLE custom_batches ADD COLUMN subject TEXT DEFAULT \'自定义\''); } catch {}
 // ---- 自定义题库（2026-08-15）：批次 = 一次导入的文件；题目字段与粉笔 questions 同构 ----
 pdb.exec(`
   CREATE TABLE IF NOT EXISTS custom_batches (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
+    subject TEXT DEFAULT '自定义',
     created_at TEXT DEFAULT (datetime('now','localtime')),
     updated_at TEXT DEFAULT (datetime('now','localtime'))
   );
@@ -1473,12 +1476,13 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/custom/import' && req.method === 'POST') {
         let body = '';
         for await (const chunk of req) body += chunk;
-        const { name, questions } = JSON.parse(body || '{}');
+        const { name, questions, subject } = JSON.parse(body || '{}');
         if (!name || !Array.isArray(questions) || questions.length === 0) return err(res, 400, '缺少批次名或题目');
+        const subj = String(subject || '').trim() || '自定义';
         const ins = pdb.prepare('INSERT INTO custom_questions (batch_id, prompt, material, options, answer, answer_index, analysis) VALUES (?, ?, ?, ?, ?, ?, ?)');
         let batchId;
         withTx(() => {
-          const tb = pdb.prepare('INSERT INTO custom_batches (name) VALUES (?)').run(String(name).trim());
+          const tb = pdb.prepare('INSERT INTO custom_batches (name, subject) VALUES (?, ?)').run(String(name).trim(), subj);
           batchId = tb.lastInsertRowid;
           for (const q of questions) {
             ins.run(
@@ -1492,12 +1496,12 @@ const server = http.createServer(async (req, res) => {
             );
           }
         });
-        return json(res, 200, { id: Number(batchId), name: String(name).trim(), count: questions.length });
+        return json(res, 200, { id: Number(batchId), name: String(name).trim(), subject: subj, count: questions.length });
       }
       // 批次列表（含题数）
       if (pathname === '/api/custom/batches' && req.method === 'GET') {
         const rows = pdb.prepare(`
-          SELECT b.id, b.name, b.created_at,
+          SELECT b.id, b.name, b.subject, b.created_at,
                  (SELECT COUNT(*) FROM custom_questions c WHERE c.batch_id = b.id) AS count
           FROM custom_batches b ORDER BY b.id DESC
         `).all();
@@ -1607,8 +1611,9 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/custom/practice' && req.method === 'GET') {
         const bid = Number(url.searchParams.get('batch_id') || 0);
         if (!bid) return err(res, 400, '缺少 batch_id');
-        const b = pdb.prepare('SELECT id, name FROM custom_batches WHERE id = ?').get(bid);
+        const b = pdb.prepare('SELECT id, name, subject FROM custom_batches WHERE id = ?').get(bid);
         if (!b) return err(res, 404, '批次不存在');
+        const bSubj = (b.subject || '自定义').trim() || '自定义';
         const rows = pdb.prepare('SELECT * FROM custom_questions WHERE batch_id = ? ORDER BY id ASC').all(bid);
         const questions = rows.map((r) => ({
           id: `custom-${r.id}`,
@@ -1620,11 +1625,11 @@ const server = http.createServer(async (req, res) => {
           answerIndex: r.answer_index == null ? -1 : Number(r.answer_index),
           analysis: r.analysis || '',
           type: 'custom',
-          subjectName: '自定义',
+          subjectName: bSubj,
           batchId: bid,
           chapter: b.name,
         }));
-        return json(res, 200, { questions, batch: { id: bid, name: b.name } });
+        return json(res, 200, { questions, batch: { id: bid, name: b.name, subject: bSubj } });
       }
       // 判分：复用 checkAnswer，写 practice_records（subject='自定义'，chapter=批次名）
       if (pathname === '/api/custom/check' && req.method === 'POST') {
@@ -1645,11 +1650,13 @@ const server = http.createServer(async (req, res) => {
           type: 'custom',
         };
         const result = checkAnswer(fq, selected);
-        const ch = chapter || pdb.prepare('SELECT name FROM custom_batches WHERE id = ?').get(Number(batchId || 0))?.name || '';
+        const bm = pdb.prepare('SELECT name, subject FROM custom_batches WHERE id = ?').get(Number(batchId || 0));
+        const ch = chapter || (bm && bm.name) || '';
+        const subj = (bm && (bm.subject || '').trim()) || '自定义';
         pdb.prepare(`
           INSERT INTO practice_records (question_id, paper_id, subject, chapter, question_type, selected, is_correct, cost_ms)
-          VALUES (?, NULL, '自定义', ?, 0, ?, ?, 0)
-        `).run(questionId, ch, JSON.stringify(selected ?? null), result.correct == null ? null : (result.correct ? 1 : 0));
+          VALUES (?, NULL, ?, ?, 0, ?, ?, 0)
+        `).run(questionId, subj, ch, JSON.stringify(selected ?? null), result.correct == null ? null : (result.correct ? 1 : 0));
         return json(res, 200, result);
       }
       // ---- 做题记录（practice.db，服务端跨设备同步） ----
@@ -1844,8 +1851,8 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/ai/explain' && req.method === 'POST') {
         let body = '';
         for await (const chunk of req) body += chunk;
-        const { questionId, selected, correct } = JSON.parse(body || '{}');
-        if (questionId == null) return err(res, 400, '缺少 questionId');
+        const { questionId, selected, correct, questionData } = JSON.parse(body || '{}');
+        if (questionId == null && !(questionData && (questionData.content || questionData.prompt))) return err(res, 400, '缺少 questionId');
         const agent = getAgent('xingce-explainer');
         if (!agent || !agent.api_key) {
           return json(res, 200, {
@@ -1853,7 +1860,37 @@ const server = http.createServer(async (req, res) => {
             content: null,
           });
         }
-        const q = qQuestionById.get(questionId);
+        // 题目来源：custom 题（前端直接带 questionData，或 custom- 前缀查自定义库）优先；粉笔题查 tiku
+        let q = null;
+        let customMaterial = '';
+        if (questionData && String(questionData.content || questionData.prompt || '').trim()) {
+          const pText = String(questionData.content || questionData.prompt || '').trim();
+          customMaterial = String(questionData.material || '').trim();
+          q = {
+            content: pText,
+            contentHtml: pText + (customMaterial ? `<p>【材料】</p>${customMaterial}` : ''),
+            options: JSON.stringify(Array.isArray(questionData.options) ? questionData.options : []),
+            answer: String(questionData.answer ?? ''),
+            answerIndex: questionData.answerIndex == null ? -1 : Number(questionData.answerIndex),
+            chapter: '自定义题库',
+          };
+        } else if (String(questionId).startsWith('custom-')) {
+          const cid = Number(String(questionId).replace(/^custom-/, ''));
+          const cr = pdb.prepare('SELECT * FROM custom_questions WHERE id = ?').get(cid);
+          if (cr) {
+            customMaterial = String(cr.material || '').trim();
+            q = {
+              content: cr.prompt,
+              contentHtml: cr.prompt + (customMaterial ? `<p>【材料】</p>${customMaterial}` : ''),
+              options: cr.options || '[]',
+              answer: cr.answer || '',
+              answerIndex: cr.answer_index == null ? -1 : Number(cr.answer_index),
+              chapter: '自定义题库',
+            };
+          }
+        } else {
+          q = qQuestionById.get(questionId);
+        }
         if (!q) return err(res, 404, '题目不存在');
         // 缓存键：题 + 作答（selected/correct 归一化；同一题同一作答只调一次 LLM）
         const selKey = selected == null ? 'none' : JSON.stringify((Array.isArray(selected) ? selected : [selected]).map(Number));
@@ -1903,6 +1940,10 @@ const server = http.createServer(async (req, res) => {
             }
           }
         } catch {}
+        // 自定义题库的材料直接带进 prompt（不落 tiku 材料表）
+        if (customMaterial) {
+          materialText = customMaterial.slice(0, 6000) + (customMaterial.length > 6000 ? '\n…（材料过长已截断）' : '');
+        }
         const isJudgment = !opts.length && !isMulti; // 判断题（无选项）
         // 提取图片 URL（contentHtml 与选项中的 <img>）
         const imgUrls = [];
@@ -1977,6 +2018,8 @@ const server = http.createServer(async (req, res) => {
           correctText = correctArr.map((i) => `${LETTERS[i]}、${opts[i]}`).join('  ');
         } else if (q.answerIndex != null && q.answerIndex >= 0) {
           correctText = `${LETTERS[q.answerIndex]}、${opts[q.answerIndex] || ''}`;
+        } else {
+          correctText = '（无标准答案）';
         }
         // 用户选择文本
         let selectedText = '未作答';
