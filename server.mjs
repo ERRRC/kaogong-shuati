@@ -252,7 +252,7 @@ function checkAnswer(q, selected) {
   }
   // 判断/无选项题
   if (!opts.length) {
-    if (!ans) return { ok: false, correct: [], selected: sel, correctText: [] };
+    if (!ans) return { ok: null, correct: [], selected: sel, correctText: [] }; // 无答案：不判分
     const a = Number(ans);
     return { ok: sel[0] === a, correct: [a], selected: sel, correctText: [sel[0] === a ? '正确' : '错误'] };
   }
@@ -264,7 +264,7 @@ function checkAnswer(q, selected) {
     const a = Number(ans);
     return { ok: sel[0] === a, correct: [a], selected: sel, correctText: opts[a] ? [opts[a]] : [] };
   }
-  return { ok: false, correct: [], selected: sel, correctText: [] }; // 真正无答案
+  return { ok: null, correct: [], selected: sel, correctText: [] }; // 真正无答案：不判分
 }
 
 // ---------- 预编译查询 ----------
@@ -1255,7 +1255,22 @@ const server = http.createServer(async (req, res) => {
       }
       // 单题详情（错题本/收藏夹点进重练用；与 /api/practice 同一输出结构）
       if (pathname === '/api/question' && req.method === 'GET') {
-        const id = Number(url.searchParams.get('id'));
+        const raw = url.searchParams.get('id') || '';
+        // 自定义题：custom- 前缀 → 从 custom_questions 取（错题/收藏重做入口）
+        if (String(raw).startsWith('custom-')) {
+          const cid = Number(String(raw).replace(/^custom-/, ''));
+          const cr = pdb.prepare('SELECT * FROM custom_questions WHERE id = ?').get(cid);
+          if (!cr) return err(res, 404, '题目不存在');
+          const b = pdb.prepare('SELECT name, subject FROM custom_batches WHERE id = ?').get(cr.batch_id) || {};
+          return json(res, 200, {
+            questionId: String(raw), id: String(raw), type: 'custom',
+            content: cr.prompt, contentHtml: cr.prompt, material: cr.material || '',
+            options: JSON.parse(cr.options || '[]'), answer: cr.answer || '', answerIndex: cr.answer_index == null ? -1 : Number(cr.answer_index),
+            analysis: cr.analysis || '',
+            subject: (b.subject || '自定义').trim() || '自定义', chapter: b.name || '',
+          });
+        }
+        const id = Number(raw);
         if (!id) return err(res, 400, '缺少 id');
         const q = qQuestionById.get(id);
         if (!q) return err(res, 404, '题目不存在');
@@ -1431,14 +1446,26 @@ const server = http.createServer(async (req, res) => {
           ORDER BY f.id DESC LIMIT ? OFFSET ?
         `).all(limit, offset);
         const total = pdb.prepare('SELECT COUNT(*) n FROM favorites').get().n;
-        const list = rows.map((r) => ({
-          questionId: r.question_id,
-          subject: r.subject,
-          chapter: r.chapter,
-          time: r.created_at,
-          content: r.content ? r.content.slice(0, 80) : null,
-          type: r.type,
-        }));
+        const list = rows.map((r) => {
+          let content = null;
+          let type = null;
+          if (String(r.question_id).startsWith('custom-')) {
+            const cid = Number(String(r.question_id).replace(/^custom-/, ''));
+            const cr = pdb.prepare('SELECT prompt FROM custom_questions WHERE id = ?').get(cid);
+            if (cr) { content = cr.prompt; type = 'custom'; }
+          } else {
+            const q = qQuestionById.get(r.question_id);
+            if (q) { content = q.content; type = q.type; }
+          }
+          return {
+            questionId: r.question_id,
+            subject: r.subject,
+            chapter: r.chapter,
+            time: r.created_at,
+            content: content ? content.slice(0, 80) : null,
+            type,
+          };
+        });
         return json(res, 200, { list, total, offset, limit, hasMore: offset + list.length < total });
       }
       // 收藏：添加/取消
@@ -1555,11 +1582,11 @@ const server = http.createServer(async (req, res) => {
         const bid = Number(batch_id);
         const qids = (Array.isArray(question_ids) ? question_ids : []).map(Number).filter(Boolean);
         if (!bid || qids.length === 0) return err(res, 400, '缺少批次或题目');
-        const src = pdb.prepare('SELECT name FROM custom_batches WHERE id = ?').get(bid);
+        const src = pdb.prepare('SELECT name, subject FROM custom_batches WHERE id = ?').get(bid);
         if (!src) return err(res, 404, '批次不存在');
         const splitN = pdb.prepare("SELECT COUNT(*) n FROM custom_batches WHERE name LIKE ?").get(src.name + '-拆分%').n;
         const newName = String(name || '').trim() || `${src.name}-拆分${splitN + 1}`;
-        const tb = pdb.prepare('INSERT INTO custom_batches (name) VALUES (?)').run(newName);
+        const tb = pdb.prepare('INSERT INTO custom_batches (name, subject) VALUES (?, ?)').run(newName, (src.subject || '自定义').trim() || '自定义');
         const nb = tb.lastInsertRowid;
         withTx(() => {
           for (const qid of qids) {
@@ -1744,16 +1771,27 @@ const server = http.createServer(async (req, res) => {
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 200);
         const offset = Math.max(Number(url.searchParams.get('offset') || 0), 0);
         const subject = url.searchParams.get('subject');
-        // 错题本只收客观题（公考行测 / 事业编职测）；申论·综应等主观题不进错题本
-        const subjectCond = subject ? 'AND subject = ?' : "AND subject IN ('公务员·行测', '事业编·职测')";
-        const params = subject ? [limit, offset, subject] : [limit, offset];
+        // 错题本只收客观题（公考行测 / 事业编职测 / 自定义题库）；申论·综应等主观题（is_correct=null）天然不匹配
+        // 简写科目（自定义题库所选：行测/职测）与粉笔全名同属一个 Tab
+        const subjMatch = (subject || '').replace('公务员·行测', '行测').replace('事业编·职测', '职测');
+        const subjectCond = subjMatch ? 'AND (subject = ? OR subject = ?)' : "AND subject IN ('公务员·行测', '事业编·职测', '行测', '职测', '自定义')";
+        const subjParams = subjMatch ? [subjMatch, (subjMatch === '行测' ? '公务员·行测' : (subjMatch === '职测' ? '事业编·职测' : subjMatch))] : [];
+        const params = subjMatch ? [...subjParams, limit, offset] : [limit, offset];
         const rows = pdb.prepare(`
           SELECT id, question_id, subject, chapter, selected, created_at
           FROM practice_records WHERE is_correct = 0 AND archived = 0 ${subjectCond}
           ORDER BY id DESC LIMIT ? OFFSET ?
         `).all(...params);
         const list = rows.map((r) => {
-          const q = qQuestionById.get(r.question_id);
+          let q = null;
+          if (String(r.question_id).startsWith('custom-')) {
+            // 自定义题：题面从 custom_questions 取
+            const cid = Number(String(r.question_id).replace(/^custom-/, ''));
+            const cr = pdb.prepare('SELECT prompt FROM custom_questions WHERE id = ?').get(cid);
+            if (cr) q = { content: cr.prompt, type: 'custom' };
+          } else {
+            q = qQuestionById.get(r.question_id);
+          }
           let myAnswer = r.selected;
           try { const arr = JSON.parse(r.selected); if (Array.isArray(arr)) myAnswer = arr.slice().sort((a, b) => a - b).join(','); } catch { /* 保持原样 */ }
           return {
@@ -1769,8 +1807,7 @@ const server = http.createServer(async (req, res) => {
           };
         });
         // 返回总数（标题显示真实错题数）+ 分页游标，前端可"加载更多"
-        const totalParams = subject ? [subject] : [];
-        const total = pdb.prepare(`SELECT COUNT(*) n FROM practice_records WHERE is_correct = 0 AND archived = 0 ${subjectCond}`).get(...totalParams).n;
+        const total = pdb.prepare(`SELECT COUNT(*) n FROM practice_records WHERE is_correct = 0 AND archived = 0 ${subjectCond}`).get(...subjParams).n;
         return json(res, 200, { list, total, offset, limit, hasMore: offset + list.length < total });
       }
       // 清空错题（软删除：archived=1，统计历史保留；按 id 单条移除；questionId 按题移除；subject 指定时只清该模块）

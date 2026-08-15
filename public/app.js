@@ -613,7 +613,7 @@ async function renderCustomBank(skipNav) {
       const card = el('div', 'custom-batch', `
         ${customMergeMode ? `<label class="cb-check-wrap"><input type="checkbox" class="cb-check" data-id="${b.id}"><span></span></label>` : ''}
         <div class="cb-main" data-go="${b.id}">
-          <div class="cb-name">${esc(b.name)}${b.subject ? `<span class="cb-subject">${esc(b.subject)}</span>` : ''}</div>
+          <div class="cb-name">${esc(b.name)}${(b.subject && b.subject !== '自定义') ? `<span class="cb-subject">${esc(b.subject)}</span>` : ''}</div>
           <div class="cb-meta">${b.count} 题 · ${esc(b.created_at || '')}</div>
         </div>
         <div class="cb-actions">
@@ -1955,6 +1955,9 @@ function renderQuestion() {
     optWrap.appendChild(b);
   });
   view.appendChild(optWrap);
+  if (!opts.length) {
+    view.appendChild(el('div', 'empty-opt-tip', `${ico('info', 14)} 本题无选项（无标准答案的主观题），可直接下一题；交卷后按「无答案」统计`));
+  }
 
   // 多选确认
   if (isMulti) {
@@ -2039,12 +2042,13 @@ function submitAnswer(q, selected, optWrap, opts, isMulti) {
   }).then((r) => {
     optWrap._locked = true;
     const correctSet = new Set((r.correct || []).map(Number));
+    const graded = r.ok !== null; // null = 无标准答案，不判分
     optWrap.querySelectorAll('.option').forEach((o, i) => {
       if (correctSet.has(i)) o.classList.add('correct');
-      else if ((Array.isArray(r.selected) ? r.selected : [r.selected]).includes(i)) o.classList.add('wrong');
+      else if (graded && (Array.isArray(r.selected) ? r.selected : [r.selected]).includes(i)) o.classList.add('wrong');
       o.style.pointerEvents = 'none';
     });
-    const banner = el('div', `result-banner ${r.ok ? 'ok' : 'no'}`, r.ok ? `${ico('checkCircle', 16)} 回答正确！` : `${ico('xCircle', 16)} 回答错误`);
+    const banner = el('div', `result-banner ${graded ? (r.ok ? 'ok' : 'no') : 'none'}`, graded ? (r.ok ? `${ico('checkCircle', 16)} 回答正确！` : `${ico('xCircle', 16)} 回答错误`) : `${ico('ban', 16)} 无标准答案（本题不判分）`);
     // 答案对照行（粉笔风格：我的答案 / 正确答案；多选按字母序显示）
     const mySel = [...(r.selected || [])].sort((a, b) => a - b).map((i) => 'ABCDEFGH'[i]).join('');
     const rightSel = [...(r.correct || [])].sort((a, b) => a - b).map((i) => 'ABCDEFGH'[i]).join('');
@@ -2078,7 +2082,7 @@ function submitAnswer(q, selected, optWrap, opts, isMulti) {
         costMs: (Date.now() - (q._t0 || Date.now())),
       }),
     }).catch(() => {});
-    if (!r.ok) {
+    if (r.ok === false) {
       store.wrong.unshift({ id: q.id, content: q.content.slice(0, 60), answer: (r.correct || []).join(','), myAnswer: (r.selected || []).join(','), subject: store.state.subject, chapter: q.chapter, time: Date.now() });
       saveWrong();
     }
@@ -2852,6 +2856,7 @@ const WRONG_TABS = [
   { key: '', name: '全部' },
   { key: '公务员·行测', name: '公考行测' },
   { key: '事业编·职测', name: '事业编职测' },
+  { key: '自定义', name: '自定义题库' },
 ];
 let wState = { total: 0, offset: 0, subject: '' };
 

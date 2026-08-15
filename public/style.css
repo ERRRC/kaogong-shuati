@@ -467,6 +467,8 @@ h1, h2, h3, .hs-num, .stat-card .num { font-family: "Varela Round", "Nunito Sans
 @keyframes bannerIn { from { opacity: 0; transform: scale(.94); } to { opacity: 1; transform: none; } }
 .result-banner.ok { background: var(--green-soft); color: var(--green); border: 1px solid color-mix(in srgb, var(--green) 30%, transparent); }
 .result-banner.no { background: var(--red-soft); color: var(--red); border: 1px solid color-mix(in srgb, var(--red) 30%, transparent); }
+.result-banner.none { background: var(--bg-soft); color: var(--text-2); border: 1px solid var(--border-strong); }
+.empty-opt-tip { display: flex; align-items: center; justify-content: center; gap: 6px; padding: 14px; margin: 12px 0; border-radius: 12px; background: var(--bg-soft); color: var(--text-2); font-size: 13px; }
 
 /* 解析框 */
 .answer-box {

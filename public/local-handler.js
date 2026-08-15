@@ -99,7 +99,20 @@ export function createLocalHandler({ query, records, store, ai }) {
         n: Number(qs.get('n') || 10),
       });
     }
-    if (route === 'GET /question') return query.questionById(qs.get('id'));
+    if (route === 'GET /question') {
+      // 自定义题：custom- 前缀 → 从 IndexedDB 取（错题/收藏重做入口）
+      const raw = String(qs.get('id') || '');
+      if (raw.startsWith('custom-')) {
+        const cid = Number(raw.replace(/^custom-/, ''));
+        const all = await store.getAll('custom_questions');
+        const cr = all.find((x) => Number(x.id) === cid);
+        if (!cr) throw new Error('题目不存在');
+        const batches = await store.getAll('custom_batches');
+        const b = batches.find((x) => Number(x.id) === Number(cr.batch_id)) || {};
+        return { questionId: raw, id: raw, type: 'custom', content: cr.prompt, contentHtml: cr.prompt, material: cr.material || '', options: cr.options || [], answer: cr.answer || '', answerIndex: cr.answer_index ?? -1, analysis: cr.analysis || '', subject: String(b.subject || '').trim() || '自定义', chapter: b.name || '' };
+      }
+      return query.questionById(qs.get('id'));
+    }
     if (route === 'GET /materials') return query.paperMaterials(qs.get('paperId'));
 
     // ---------- 智能组卷 ----------
@@ -265,7 +278,7 @@ export function createLocalHandler({ query, records, store, ai }) {
       const splitN = batches.filter((x) => String(x.name || '').startsWith(String(src.name || '') + '-拆分')).length;
       const newName = String(body.name || '').trim() || `${src.name}-拆分${splitN + 1}`;
       const nb = await store.nextId('custom_batches');
-      await store.put('custom_batches', { id: nb, name: newName, created_at: new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-'), updated_at: '' });
+      await store.put('custom_batches', { id: nb, name: newName, subject: String(src.subject || '').trim() || '自定义', created_at: new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-'), updated_at: '' });
       const questions = await store.getAll('custom_questions');
       let cnt = 0;
       for (const q of questions) {

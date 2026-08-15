@@ -78,14 +78,24 @@ export function createRecordsApi(store, tiku, onChanged) {
       const page = rows.slice(offset, offset + limit);
       const list = [];
       for (const r of page) {
-        const q = tiku.get('SELECT content, contentHtml, type FROM questions WHERE questionId = ? LIMIT 1', r.question_id);
+        // 自定义题：题面从 IndexedDB 取
+        let content = null; let type = null;
+        if (String(r.question_id).startsWith('custom-')) {
+          const all = await store.getAll('custom_questions');
+          const cr = all.find((x) => Number(x.id) === Number(String(r.question_id).replace(/^custom-/, '')));
+          if (cr) { content = cr.prompt; type = 'custom'; }
+        } else {
+          const q = tiku.get('SELECT content, contentHtml, type FROM questions WHERE questionId = ? LIMIT 1', r.question_id);
+          content = q?.content ? q.content.slice(0, 80) : (q?.contentHtml ? '（图片题）' : null);
+          type = q?.type ?? null;
+        }
         list.push({
           questionId: r.question_id,
           subject: r.subject || '',
           chapter: r.chapter || '',
           time: r.created_at,
-          content: q?.content ? q.content.slice(0, 80) : (q?.contentHtml ? '（图片题）' : null),
-          type: q?.type ?? null,
+          content: content ? String(content).slice(0, 80) : null,
+          type,
         });
       }
       return { list, total, offset, limit, hasMore: offset + list.length < total };
@@ -152,9 +162,13 @@ export function createRecordsApi(store, tiku, onChanged) {
     async wrong({ limit = 50, offset = 0, subject } = {}) {
       let rows = (await store.getAll('records')).filter((r) => r.is_correct === 0);
       // 错题本只收录客观题（公考行测 / 事业编职测 / 自定义题库）；申论·综应等主观题不进错题本
-      const WRONG_SUBJECTS = new Set(['公务员·行测', '事业编·职测', '自定义']);
+      // 简写科目（自定义题库所选：行测/职测）与粉笔全名同属一个 Tab
+      const WRONG_SUBJECTS = new Set(['公务员·行测', '事业编·职测', '自定义', '行测', '职测']);
       rows = rows.filter((r) => WRONG_SUBJECTS.has(r.subject));
-      if (subject) rows = rows.filter((r) => r.subject === subject);
+      if (subject) {
+        const s2 = String(subject).replace('公务员·行测', '行测').replace('事业编·职测', '职测');
+        rows = rows.filter((r) => r.subject === s2 || (s2 === '行测' && r.subject === '公务员·行测') || (s2 === '职测' && r.subject === '事业编·职测'));
+      }
       rows.sort((a, b) => (b.created_at || 0) - (a.created_at || 0));
       const seen = new Set();
       const uniq = rows.filter((r) => (seen.has(r.question_id) ? false : (seen.add(r.question_id), true)));
@@ -167,6 +181,7 @@ export function createRecordsApi(store, tiku, onChanged) {
       for (const r of page) {
         let q = null;
         if (String(r.question_id).startsWith('custom-')) {
+          // 自定义题：题面从 IndexedDB 取
           const cr = customOf.get(Number(String(r.question_id).replace(/^custom-/, '')));
           if (cr) q = { content: cr.prompt, type: 'custom' };
         } else {
