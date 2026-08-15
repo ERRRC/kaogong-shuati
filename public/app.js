@@ -2794,7 +2794,7 @@ async function explainQuestion(q, selected, correct, box) {  const btn = $('#btn
       html += `<div style="white-space:pre-wrap;font-size:14px;line-height:1.8">${esc(r.content)}</div>`;
       result.innerHTML = html;
     } else {
-      result.innerHTML = `<div class="ab-title" style="color:var(--red)">${ico('alert', 15)} ${esc(r.notice || '解析失败')}</div>`;
+      result.innerHTML = `<div class="ab-title" style="color:var(--red)">${ico('alert', 15)} ${esc(r.notice || r.error || '解析失败')}</div>`;
     }
   } catch (e) {
     result.innerHTML = `<div class="ab-title" style="color:var(--red)">${ico('xCircle', 15)} ${esc(e.message)}</div>`;
