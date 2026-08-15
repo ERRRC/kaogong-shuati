@@ -2411,7 +2411,7 @@ async function explainReview(q, selected, correct, box, btn) {
       })()),
     }).catch((e) => ({ notice: e.message }));
     if (r.content) box.innerHTML = `<div class="ab-title">${ico('sparkles', 15)} AI 解析${r.cached ? ' <span style="color:var(--muted);font-size:11px">（缓存）</span>' : ''}</div><div style="white-space:pre-wrap;font-size:13.5px;line-height:1.8">${esc(r.content)}</div>`;
-    else box.innerHTML = `<div class="ab-title" style="color:var(--red)">${ico('alert', 15)} ${esc(r.notice || '解析失败')}</div>`;
+    else box.innerHTML = `<div class="ab-title" style="color:var(--red)">${ico('alert', 15)} ${esc(r.notice || r.error || '解析失败')}</div>`;
     btn.disabled = false;
     btn.innerHTML = `${ico('sparkles', 15)} AI 解析本题`;
   } else {
