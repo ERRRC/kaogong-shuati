@@ -103,6 +103,19 @@ function parseBlock(lines) {
       const letter = om[1].toUpperCase();
       // 选项必须从 A 开始（防题干误判，如 "C. 的说法错误"）
       if (options.length === 0 && letter !== 'A') { prompt.push(tt); continue; }
+      // 同行多选项拆分（常见粘贴格式：如 "A. 1949年 B. 1954年 C. 1978年 D. 1982年"）
+      const marks = tt.match(/[（(]?[A-Ha-h][)）]?[.、．:：]/g);
+      if (marks && marks.length >= 2) {
+        const parts = tt.split(/[（(]?([A-Ha-h])[)）]?[.、．:：]\s*/);
+        let prefix = String(parts.shift() || '').trim();
+        for (let i = 0; i + 1 < parts.length; i += 2) {
+          const L = String(parts[i] || '').toUpperCase();
+          const C = (prefix ? prefix + ' ' : '') + String(parts[i + 1] || '').trim();
+          if (L && C) options.push(`${L}. ${C}`);
+          prefix = '';
+        }
+        continue;
+      }
       options.push(tt);
       continue;
     }
