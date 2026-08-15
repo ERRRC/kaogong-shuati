@@ -205,7 +205,7 @@ export function checkAnswer(q, selected) {
     return { ok, correct, selected: sel, correctText: correct.map((i) => opts[i]).filter(Boolean) };
   }
   if (!opts.length) {
-    if (!ans) return { ok: false, correct: [], selected: sel, correctText: [] };
+    if (!ans) return { ok: null, correct: [], selected: sel, correctText: [] }; // 无答案：不判分
     const a = Number(ans);
     return { ok: sel[0] === a, correct: [a], selected: sel, correctText: [sel[0] === a ? '正确' : '错误'] };
   }
@@ -216,7 +216,7 @@ export function checkAnswer(q, selected) {
     const a = Number(ans);
     return { ok: sel[0] === a, correct: [a], selected: sel, correctText: opts[a] ? [opts[a]] : [] };
   }
-  return { ok: false, correct: [], selected: sel, correctText: [] }; // 真正无答案
+  return { ok: null, correct: [], selected: sel, correctText: [] }; // 真正无答案：不判分
 }
 
 /** 随机出题（与 server randomQuestions 相同；tiku 为适配器） */
