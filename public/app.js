@@ -3140,6 +3140,7 @@ async function renderAiSettings() {
     return;
   }
   view.innerHTML = '';
+  // 使用统计配置入口已按要求隐藏（2026-08-15）：不上报地址/设备 ID 等展示，避免用户误解；底层上报逻辑保留
   view.appendChild(el('div', 'card', `
     <h3>${ico('sparkles', 17)} AI 智能体（独立配置）</h3>
     <div class="li-sub">每个 AI 可独立修改 prompt、skill、API Key、URL、模型。<br>修改后<b>立即生效</b>，无需重启；prompt/skill 变更自动保存历史版本，并<b>自动清空题目解析缓存</b>（否则已解析过的题会直接返回旧结果）。</div>
@@ -3147,27 +3148,6 @@ async function renderAiSettings() {
       <button class="btn" data-clear-explain-cache>${ico('trash', 14)} 清除解析缓存（重新解析所有已缓存题目）</button>
     </div>
   `));
-  // 使用统计：上报地址配置（App 离线模式默认地址为空，需在此填花生壳域名后保存）
-  const tCard = el('div', 'card');
-  tCard.innerHTML = `
-    <h3>${ico('chart', 17)} 使用统计（可选）</h3>
-    <div class="li-sub">统计“有多少人在用”：仅上报设备 ID + 行为事件，不含做题内容。<br>本设备 ID：<code style="font-size:12px">${esc(Telemetry.installId())}</code></div>
-    <label class="field-label">上报服务器地址（留空 = 打包默认 / Web 自动同源）</label>
-    <input class="field" data-t-url value="${esc(Telemetry.serverUrl())}" placeholder="https://xxxxx.vipgz1.idcfengye.com">
-    <div style="display:flex;gap:8px;margin-top:10px;flex-wrap:wrap">
-      <button class="btn btn-ghost" data-t-save>${ico('save', 15)} 保存地址</button>
-      <button class="btn btn-ghost" data-t-flush>${ico('trendingUp', 15)} 立即上报</button>
-    </div>
-  `;
-  tCard.querySelector('[data-t-save]').onclick = () => {
-    Telemetry.setServerUrl(tCard.querySelector('[data-t-url]').value);
-    toast('已保存。生效地址：' + (Telemetry.serverUrl() || '未配置'));
-  };
-  tCard.querySelector('[data-t-flush]').onclick = () => {
-    Telemetry.track('manual_flush', {});
-    toast('已触发上报');
-  };
-  view.appendChild(tCard);
   view.querySelector('[data-clear-explain-cache]').onclick = async () => {
     const r = await api('/api/ai/explain-cache', { method: 'DELETE' });
     toast(r.cleared > 0 ? `已清除 ${r.cleared} 条解析缓存` : '缓存本来就是空的');
