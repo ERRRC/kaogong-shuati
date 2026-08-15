@@ -613,7 +613,7 @@ async function renderCustomBank(skipNav) {
       const card = el('div', 'custom-batch', `
         ${customMergeMode ? `<label class="cb-check-wrap"><input type="checkbox" class="cb-check" data-id="${b.id}"><span></span></label>` : ''}
         <div class="cb-main" data-go="${b.id}">
-          <div class="cb-name">${esc(b.name)}</div>
+          <div class="cb-name">${esc(b.name)}${b.subject ? `<span class="cb-subject">${esc(b.subject)}</span>` : ''}</div>
           <div class="cb-meta">${b.count} 题 · ${esc(b.created_at || '')}</div>
         </div>
         <div class="cb-actions">
@@ -756,7 +756,7 @@ async function customPractice(batchId, name) {
   try {
     const r = await api('/api/custom/practice?batch_id=' + batchId);
     if (!r.questions || r.questions.length === 0) { toast('该批次暂无题目'); return; }
-    enterQuiz(r.questions, '自定义', 'custom', null, null, null);
+    enterQuiz(r.questions, (r.batch && r.batch.subject) || '自定义', 'custom', null, null, null);
   } catch (e) { toast('加载失败：' + e.message); }
 }
 
