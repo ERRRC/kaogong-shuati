@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { DatabaseSync } from 'node:sqlite';
 import { fileURLToPath } from 'node:url';
-import { listAgents, getAgent, updateAgent, getHistory, callAgent, initAiConfig } from './lib/ai-agents.mjs';
+import { listAgents, getAgent, updateAgent, getHistory, callAgent, initAiConfig, listUserSkills, addUserSkill, deleteUserSkill } from './lib/ai-agents.mjs';
 import { extractMaterialFromPdf } from './lib/pdf-ocr.mjs';
 import { FENBI_TREE, ESSAY_TREE, SHENLUN_TREE, ZONGYING_TREE } from './lib/fenbi-tree.mjs';
 import { mapChapterToNode } from './lib/xingce-chapter-map.mjs';
@@ -33,7 +33,7 @@ initAiConfig(); // 初始化 ai-config.db（首次自动写入五个 AI 默认�
 
 // ---------- 做题记录库（可写 practice.db，独立于只读 tiku.db） ----------
 const PRACTICE_DB = path.join(__dirname, 'practice.db');
-const pdb = new DatabaseSync(PRACTICE_DB);
+const pdb = new DatabaseSync(PRACTICE_DB, { timeout: 10000 });
 // 附加只读题库,供 practice.db 侧的统计 SQL 引用真实题目(排除已删题的索引残留)
 pdb.exec(`ATTACH DATABASE ${JSON.stringify(DB_FILE)} AS tiku`);
 pdb.exec(`
@@ -122,7 +122,7 @@ pdb.exec(`
 // 事件带"发生时的原始时间戳 ts"，服务端按 ts 聚合 DAU/MAU（补报不影响准确性）；
 // install_id 由客户端生成（UUID，永久不变），COUNT(DISTINCT install_id) 即"人数"。
 const STATS_DB = path.join(__dirname, 'stats.db');
-const sdb = new DatabaseSync(STATS_DB);
+const sdb = new DatabaseSync(STATS_DB, { timeout: 10000 });
 sdb.exec(`
   CREATE TABLE IF NOT EXISTS telemetry_events (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -150,12 +150,14 @@ async function callVision(apiKey, baseUrl, model, imgs, mode = 'describe') {
   const url = baseUrl.replace(/\/+$/, '') + '/chat/completions';
   const text = mode === 'ocr'
     ? '这是一张考生手写或打印的答题纸图片。请逐字准确转写图片中的全部作答文字（包括标点、数字、段落换行）。要求：1) 手写潦草处根据上下文合理推断；2) 不要修改、润色或添加任何内容；3) 只输出识别出的原文，不要任何解释或标记。'
+    : mode === 'structure'
+    ? '这是一张考公题目图片（试卷/练习册/资料截图，可能包含一道或多道题，也可能混有笔记、页码等非题目内容）。请仔细观察整张图片：先筛选出真正的题目（过滤笔记、说明、考情、页眉页脚、页码等非题目内容；拿不准但疑似题目的保留），再把每道题整理为结构化 JSON，只输出 JSON，不要任何其他文字、解释或 Markdown 代码块：\n{"questions":[{"prompt":"题干","material":"材料（材料题才有的背景材料；没有则为空字符串）","options":["选项文本1","选项文本2"],"answer":"答案原文（如 A / AB / 正确；没有则为空字符串）","analysis":"解析（没有则为空字符串）"}]}\n要求：忠实图片内容，不编造、不补全缺失信息；一道题一个对象；同一材料下有多道小题时，每道小题的 material 都填同一材料；选项顺序与图片一致；判断题没有选项时 options 留空数组；OCR 转写造成的错别字尽量按常识修正，无法确认的保留原文。'
     : '这是一道考公题目的图片（可能包含题干图形序列和 A/B/C/D 选项图形）。请逐一详细转写图片中的全部内容：题干部分描述每个图形的形状/线条/数量/位置/规律；选项部分标注 A/B/C/D 对应关系。不要遗漏任何图形或文字。';
   const content = [
     { type: 'text', text },
     ...imgs.map((i) => ({ type: 'image_url', image_url: { url: `data:${i.mime};base64,${i.b64}` } })),
   ];
-  const body = { model, messages: [{ role: 'user', content }], temperature: 0.1, max_tokens: 4000, stream: false };
+  const body = { model, messages: [{ role: 'user', content }], temperature: 0.1, max_tokens: mode === 'structure' ? 8000 : 4000, stream: false };
   // 推理型模型（mimo/deepseek 等）默认思维链极长，会吃光 max_tokens 导致 content 为空；
   // 传 reasoning_effort=low 抑制过度思考（网关不支持时自动回退重试）
   body.reasoning_effort = 'low';
@@ -298,6 +300,25 @@ function mockCond(mock) {
   if (mock === '1') return " AND (p.category LIKE '%模拟%' OR p.category LIKE '%模考%')";
   return '';
 }
+// ============ 题库精简（2026-08）：只保留近十年试卷（年份取试卷名前缀，如 "2024年..."） ============
+// 无年份名称（如 "天津市2"）substr 得非数字 → 自然排除；按分类刷试卷(/api/papers)不受影响
+const NOW_YEAR = new Date().getFullYear();
+const YEAR_FROM = NOW_YEAR - 9; // 近十年下限（2026 年即 2017）
+const YEAR_TO = NOW_YEAR;
+// year: 'all'=不限（自定义刷题可选） | '3'/'5'/'10'=近 N 年 | 缺省=近十年（精简口径）
+function yearCond(year) {
+  if (year === 'all' || year == null || year === '') return '';
+  const y = parseInt(year, 10);
+  const n = Number.isInteger(y) && y >= 3 ? y : 10;
+  return ` AND substr(p.name, 1, 4) BETWEEN '${NOW_YEAR - n + 1}' AND '${NOW_YEAR}'`;
+}
+// 难度过滤（自定义刷题/组卷共用口径，粉笔 difficulty 1-9）：random/缺省不限难度（含未标注）
+function diffCond(difficulty) {
+  if (difficulty === 'random' || difficulty == null || difficulty === '') return '';
+  const d = XINGCE_DIFFICULTY[difficulty];
+  if (!d) return '';
+  return ` AND q.difficulty BETWEEN ${d.min} AND ${d.max}`;
+}
 // 模块两级分组（粉笔风格：大模块 → 子模块）
 const MODULE_GROUPS = [
   { name: '言语理解与表达', keys: ['言语', '选词填空', '实词填空', '阅读理解', '段落阅读', '语句表达', '逻辑填空'] },
@@ -358,11 +379,11 @@ function essayObjectiveGroup(ch) {
   if (/(填空)/.test(ch)) return '填空';
   return '其他';
 }
-/** 随机出题（支持真题/模拟题过滤；chapters 为数组时可多章节混出）
+/** 随机出题（支持真题/模拟题过滤；chapters 为数组时可多章节混出；year: 'all'|'3'|'5'|'10'，缺省近十年；difficulty: 'easy'|'balanced'|'hard'|'random'）
  *  注意：题库删除后 id 有空洞，单点取样会落空 → 多轮取样 + 顺序补取，凑够 n 道
  *  去重：同一 questionId 可能出现在多套卷（联考卷共享），按 questionId 去重保证按题刷题不重复 */
-function randomQuestions(subject, chapters, n, mock) {
-  const cond = mockCond(mock);
+function randomQuestions(subject, chapters, n, mock, year, difficulty) {
+  const cond = mockCond(mock) + yearCond(year === undefined ? '10' : year) + diffCond(difficulty);
   const chList = Array.isArray(chapters) ? chapters.filter(Boolean) : (chapters ? [chapters] : []);
   const chCond = chList.length ? `AND q.chapter IN (${chList.map(() => '?').join(',')}) ` : '';
   const where = `p.subjectName = ? ${chCond}${cond}`;
@@ -434,21 +455,37 @@ function toQuestion(q) {
 
 // ---------- 路由 ----------
 // 题组增强：把题目按材料（material_id）归组，返回组信息 + 材料内容
-function enrichGroups(rows, subject) {
+function enrichGroups(rows, subject, diffFilter) {
   const qids = rows.map((r) => r.id ?? r.questionId);
+  let dropped = null; // 难度过滤时被整组剔除的题
   let maps = [];
   if (qids.length) {
     maps = pdb.prepare(`SELECT question_id, material_id FROM q_material_map WHERE subject = ? AND question_id IN (${qids.map(() => '?').join(',')})`).all(subject, ...qids);
   }
   const gidOf = new Map(maps.filter((m) => m.material_id != null).map((m) => [m.question_id, m.material_id]));
   const gids = [...new Set(gidOf.values())];
-  // 组内全部题（同 material_id）
+  // 组内全部题（同 material_id）；difficulty 过滤（自定义刷题）时整组必须全部满足，否则整组剔除
   const groupMembers = new Map(); // material_id -> [question_id...]
   if (gids.length) {
     const mem = pdb.prepare(`SELECT question_id, material_id FROM q_material_map WHERE subject = ? AND material_id IN (${gids.map(() => '?').join(',')})`).all(subject, ...gids);
     for (const m of mem) {
       if (!groupMembers.has(m.material_id)) groupMembers.set(m.material_id, []);
       groupMembers.get(m.material_id).push(m.question_id);
+    }
+    if (diffFilter) {
+      const allIds = [...new Set([...qids, ...[...groupMembers.values()].flat()])];
+      const diffs = new Map(db.prepare(`SELECT questionId, difficulty FROM questions WHERE questionId IN (${allIds.map(() => '?').join(',')})`).all(...allIds).map((q) => [q.questionId, q.difficulty]));
+      const bad = new Set(); // 不满足难度的题
+      for (const [gid, members] of groupMembers) {
+        const ok = members.every((mid) => {
+          const d = diffs.get(mid);
+          return d != null && d >= diffFilter.min && d <= diffFilter.max;
+        });
+      if (!ok) { bad.add(gid); for (const mid of members) bad.add(mid); }
+      }
+      dropped = bad;
+      for (const mid of bad) gidOf.delete(mid);
+      for (const gid of bad) if (groupMembers.has(gid)) groupMembers.delete(gid);
     }
   }
   // gidOf 覆盖组内全部题（含补充题）
@@ -471,6 +508,7 @@ function enrichGroups(rows, subject) {
   const byId = new Map(qs.map((q) => [q.questionId, q]));
   const out = [];
   for (const q of qs) {
+    if (dropped?.has(q.questionId)) continue; // 难度过滤：整组剔除的题不输出
     const gid = gidOf.get(q.questionId);
     const o = byId.get(q.questionId);
     let gi = 0, gt = 1, mat = null;
@@ -650,7 +688,7 @@ function getPaperPool() {
            q.difficulty diff, q.type type, p.category pcat, p.subjectName psub, q.chapter chapter
     FROM question_categories qc
     JOIN tiku.questions q ON q.questionId = qc.question_id
-    JOIN tiku.papers p ON p.id = q.paperId
+    JOIN tiku.papers p ON p.id = q.paperId AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
   `).all()) {
     const key = `${r.subj}|${r.cat}|${r.sub}`;
     let arr = byKey.get(key);
@@ -662,7 +700,7 @@ function getPaperPool() {
            q.difficulty diff, q.type type, p.category pcat, p.subjectName psub, q.chapter chapter, q.id seq
     FROM q_material_map mm
     JOIN tiku.questions q ON q.questionId = mm.question_id
-    JOIN tiku.papers p ON p.id = q.paperId
+    JOIN tiku.papers p ON p.id = q.paperId AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
     WHERE mm.material_id IS NOT NULL
     ORDER BY q.id
   `).all()) {
@@ -1143,18 +1181,23 @@ const server = http.createServer(async (req, res) => {
                    COUNT(DISTINCT tq.questionId) AS questions
             FROM tiku.papers tp
             LEFT JOIN tiku.questions tq ON tq.paperId = tp.id
+            WHERE substr(tp.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
             GROUP BY tp.subjectName
           `).all());
         }
         const staticRows = chapterCache.get('subjects|static');
         // 综应只保留 A 类：主界面题目数按分类树口径（question_categories），与专项练习一致
-        const zongyingN = pdb.prepare(`SELECT COUNT(DISTINCT question_id) AS n FROM question_categories WHERE subject = '事业编·综应'`).get().n;
+        const zongyingN = pdb.prepare(`SELECT COUNT(DISTINCT qc.question_id) AS n FROM question_categories qc
+          JOIN tiku.questions q ON q.questionId = qc.question_id
+          JOIN tiku.papers p ON p.id = q.paperId AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
+          WHERE qc.subject = '事业编·综应'`).get().n;
         // 动态部分：已做对的去重题数（随做题记录变化，不缓存；subject 以题库为准）
         const doneRows = pdb.prepare(`
           SELECT tp.subjectName, COUNT(DISTINCT r.question_id) AS done
           FROM tiku.papers tp
           JOIN tiku.questions tq ON tq.paperId = tp.id
           JOIN practice_records r ON r.question_id = tq.questionId AND r.is_correct = 1
+          WHERE substr(tp.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
           GROUP BY tp.subjectName
         `).all();
         const doneMap = new Map(doneRows.map((r) => [r.subjectName, Number(r.done || 0)]));
@@ -1171,7 +1214,7 @@ const server = http.createServer(async (req, res) => {
         if (!chapterCache.has(catKey)) {
           // 综应只保留 A 类（用户要求）：过滤联考B/C/D类试卷分类
           const rows = db.prepare(
-            "SELECT p.category, COUNT(DISTINCT p.id) AS papers, COUNT(DISTINCT q.questionId) AS questions FROM papers p LEFT JOIN questions q ON q.paperId = p.id WHERE p.subjectName = ? GROUP BY p.category ORDER BY papers DESC"
+            `SELECT p.category, COUNT(DISTINCT p.id) AS papers, COUNT(DISTINCT q.questionId) AS questions FROM papers p LEFT JOIN questions q ON q.paperId = p.id WHERE p.subjectName = ? AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}' GROUP BY p.category ORDER BY papers DESC`
           ).all(subject);
           const filtered = subject === '事业编·综应' ? rows.filter((r) => !['联考B类', '联考C类', '联考D类'].includes(r.category)) : rows;
           chapterCache.set(catKey, filtered);
@@ -1220,38 +1263,54 @@ const server = http.createServer(async (req, res) => {
         const group = url.searchParams.get('group');
         const sub = url.searchParams.get('sub');
         const mock = url.searchParams.get('mock');
+        const year = url.searchParams.get('year') || undefined; // 自定义刷题：'all'|'3'|'5'|'10'；缺省近十年
+        const difficulty = url.searchParams.get('difficulty') || undefined; // 自定义刷题：'easy'|'balanced'|'hard'|'random'
         const n = Math.min(Number(url.searchParams.get('n') || 10), 50);
+        // 自定义刷题（custom=1）：题量由面板控制，不走随机练习的 15 题/申论 2 题规则
+        const custom = url.searchParams.get('custom') === '1';
+        // 自定义刷题：多抽 3 倍候选（材料组整组剔除后仍能凑满），再按面板题量裁剪
+        const fetchN = custom ? Math.min(n * 3, 150) : n;
         if (!subject) return err(res, 400, '缺少 subject');
         const chList = chapters ? chapters.split(',').map((s) => s.trim()).filter(Boolean) : (chapter ? [chapter] : null);
-        const max = practiceMax(subject, group, chList);
+        const max = custom ? n : practiceMax(subject, group, chList);
+        // 材料组整组难度检查（自定义刷题难度过滤时）：组内任一题不满足 → 整组剔除；random/缺省不检查
+        const diffFilter = (difficulty && difficulty !== 'random' && XINGCE_DIFFICULTY[difficulty]) || null;
         // 按树节点出题（ESSAY_TREE：综应/申论查分类索引，事业编查章节映射）
         if (group) {
           if (subject === '公务员·申论' || subject === '事业编·综应' || subject === '公务员·行测' || subject === '事业编·职测') {
-            // sub='全部' → 该大模块全部题（不限子模块）；只取库中真实存在的题
+            // sub='全部' → 该大模块全部题（不限子模块）；只取库中真实存在的题（且属近十年，year 参数控制）
+            const yc = yearCond(year === undefined ? '10' : year);
+            const dc = diffCond(difficulty);
             const ids = (sub === '全部'
-              ? pdb.prepare('SELECT qc.question_id FROM question_categories qc WHERE qc.category = ? AND qc.subject = ? AND EXISTS (SELECT 1 FROM tiku.questions q WHERE q.questionId = qc.question_id) ORDER BY RANDOM() LIMIT ?')
-              : pdb.prepare('SELECT qc.question_id FROM question_categories qc WHERE qc.category = ? AND qc.sub = ? AND qc.subject = ? AND EXISTS (SELECT 1 FROM tiku.questions q WHERE q.questionId = qc.question_id) ORDER BY RANDOM() LIMIT ?')
-            ).all(...(sub === '全部' ? [group, subject, n] : [group, sub, subject, n])).map((r) => r.question_id);
+              ? pdb.prepare(`SELECT qc.question_id FROM question_categories qc
+                  JOIN tiku.questions q ON q.questionId = qc.question_id
+                  JOIN tiku.papers p ON p.id = q.paperId
+                  WHERE qc.category = ? AND qc.subject = ? ${yc}${dc} GROUP BY qc.question_id ORDER BY RANDOM() LIMIT ?`)
+              : pdb.prepare(`SELECT qc.question_id FROM question_categories qc
+                  JOIN tiku.questions q ON q.questionId = qc.question_id
+                  JOIN tiku.papers p ON p.id = q.paperId
+                  WHERE qc.category = ? AND qc.sub = ? AND qc.subject = ? ${yc}${dc} GROUP BY qc.question_id ORDER BY RANDOM() LIMIT ?`)
+            ).all(...(sub === '全部' ? [group, subject, fetchN] : [group, sub, subject, fetchN])).map((r) => r.question_id);
             if (!ids.length) return json(res, 200, []);
             const qs = db.prepare(
               `SELECT q.questionId, q.paperId, q.chapter, q.type, q.content, q.contentHtml, q.options, q.answer, q.answerIndex, q.difficulty, q.analysis
                FROM questions q WHERE q.questionId IN (${ids.map(() => '?').join(',')}) GROUP BY q.questionId`
             ).all(...ids);
-            return json(res, 200, trimToMax(enrichGroups(qs, subject), max));
+            return json(res, 200, trimToMax(enrichGroups(qs, subject, diffFilter), max));
           }
           // 事业编：查 ESSAY_TREE 节点对应章节
           const chs = db.prepare(`
             SELECT DISTINCT q.chapter FROM questions q JOIN papers p ON p.id = q.paperId
-            WHERE p.subjectName = ? AND q.chapter != ''
+            WHERE p.subjectName = ? AND q.chapter != '' ${yearCond('10')}
           `).all(subject).map((r) => r.chapter).filter((ch) => {
             const node = mapEssayChapterToNode(ch);
             return node && node.group === group && (sub === '全部' || node.sub === sub);
           });
-          const rows = randomQuestions(subject, chs.length ? chs : null, n, mock);
-          return json(res, 200, trimToMax(enrichGroups(rows, subject), max));
+          const rows = randomQuestions(subject, chs.length ? chs : null, fetchN, mock, year, difficulty);
+          return json(res, 200, trimToMax(enrichGroups(rows, subject, diffFilter), max));
         }
-        const rows = randomQuestions(subject, chList, n, mock);
-        return json(res, 200, trimToMax(enrichGroups(rows, subject), max));
+        const rows = randomQuestions(subject, chList, fetchN, mock, year, difficulty);
+        return json(res, 200, trimToMax(enrichGroups(rows, subject, diffFilter), max));
       }
       // 单题详情（错题本/收藏夹点进重练用；与 /api/practice 同一输出结构）
       if (pathname === '/api/question' && req.method === 'GET') {
@@ -1275,7 +1334,9 @@ const server = http.createServer(async (req, res) => {
         const q = qQuestionById.get(id);
         if (!q) return err(res, 404, '题目不存在');
         const subject = pdb.prepare('SELECT subjectName FROM tiku.papers WHERE id = ?').get(q.paperId)?.subjectName ?? '';
-        return json(res, 200, { ...toQuestion(q), subject });
+        // 材料组信息（与 /api/practice 同构）：错题本/收藏夹单题重练也要显示给定材料
+        const [enriched] = enrichGroups([q], subject, null);
+        return json(res, 200, { ...(enriched || toQuestion(q)), subject });
       }
       // 章节列表（含题量 + 用户做题统计，支持 mock 过滤）
       if (pathname === '/api/chapters' && req.method === 'GET') {
@@ -1288,7 +1349,7 @@ const server = http.createServer(async (req, res) => {
         if (!chapterCache.has(totalsKey)) {
           chapterCache.set(totalsKey, db.prepare(`
             SELECT q.chapter, COUNT(*) c FROM questions q JOIN papers p ON p.id = q.paperId
-            WHERE p.subjectName = ? ${cond} GROUP BY q.chapter ORDER BY c DESC
+            WHERE p.subjectName = ? ${cond}${yearCond('10')} GROUP BY q.chapter ORDER BY c DESC
           `).all(subject));
         }
         const totals = chapterCache.get(totalsKey);
@@ -1354,8 +1415,10 @@ const server = http.createServer(async (req, res) => {
           const idxKey = `idxmap|${subject}`;
           if (!chapterCache.has(idxKey)) {
             chapterCache.set(idxKey, pdb.prepare(`
-              SELECT qc.category, qc.sub, COUNT(*) c FROM question_categories qc
-              WHERE qc.subject = ? AND EXISTS (SELECT 1 FROM tiku.questions q WHERE q.questionId = qc.question_id)
+              SELECT qc.category, qc.sub, COUNT(DISTINCT qc.question_id) c FROM question_categories qc
+              JOIN tiku.questions q ON q.questionId = qc.question_id
+              JOIN tiku.papers p ON p.id = q.paperId AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
+              WHERE qc.subject = ?
               GROUP BY qc.category, qc.sub
             `).all(subject));
           }
@@ -1381,8 +1444,11 @@ const server = http.createServer(async (req, res) => {
             for (const r of pdb.prepare(`
               SELECT qc.category, qc.sub, COUNT(DISTINCT qc.question_id) c,
                      COUNT(DISTINCT CASE WHEN r.is_correct = 1 THEN qc.question_id END) ok
-              FROM question_categories qc LEFT JOIN practice_records r ON r.question_id = qc.question_id
-              WHERE qc.subject = ? AND EXISTS (SELECT 1 FROM tiku.questions q WHERE q.questionId = qc.question_id)
+              FROM question_categories qc
+              JOIN tiku.questions q ON q.questionId = qc.question_id
+              JOIN tiku.papers p ON p.id = q.paperId AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
+              LEFT JOIN practice_records r ON r.question_id = qc.question_id
+              WHERE qc.subject = ?
               GROUP BY qc.category, qc.sub
             `).all(subject)) {
               nodeStatsMap.set(`${r.category}|${r.sub}`, { total: Number(r.c) || 0, done: r.ok ?? null, rate: null });
@@ -1541,14 +1607,19 @@ const server = http.createServer(async (req, res) => {
         const rows = pdb.prepare('SELECT id, batch_id, prompt, material, options, answer, answer_index, analysis FROM custom_questions WHERE batch_id = ? ORDER BY id ASC').all(batchId);
         return json(res, 200, { questions: rows.map((r) => ({ ...r, options: JSON.parse(r.options || '[]') })) });
       }
-      // 批改名
+      // 批改名（可同时改科目）
       if (pathname === '/api/custom/batch' && req.method === 'PUT') {
         let body = '';
         for await (const chunk of req) body += chunk;
-        const { id, name } = JSON.parse(body || '{}');
+        const { id, name, subject } = JSON.parse(body || '{}');
         const nid = Number(id);
         if (!nid || !String(name || '').trim()) return err(res, 400, '缺少 id 或批次名');
-        pdb.prepare("UPDATE custom_batches SET name = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(String(name).trim(), nid);
+        const s = String(subject ?? '').trim();
+        if (s) {
+          pdb.prepare("UPDATE custom_batches SET name = ?, subject = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(String(name).trim(), s, nid);
+        } else {
+          pdb.prepare("UPDATE custom_batches SET name = ?, updated_at = datetime('now','localtime') WHERE id = ?").run(String(name).trim(), nid);
+        }
         return json(res, 200, { ok: true });
       }
       // 合并批次：把选中的批次题目并入第一个（id 最小）批次，删其余批次
@@ -1866,6 +1937,43 @@ const server = http.createServer(async (req, res) => {
         const n = pdb.prepare('DELETE FROM ai_explains').run().changes;
         return json(res, 200, { ok: true, cleared: n });
       }
+      // 模型列表代理（Web 浏览器直连第三方网关被 CORS 拦截时的兜底；
+      // 服务端 node fetch 无 CORS；App 端走 CapacitorHttp 直连无需此代理）
+      if (pathname === '/api/ai/models-proxy' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { baseUrl, apiKey } = JSON.parse(body || '{}');
+        let base = String(baseUrl || '').trim().replace(/\/+$/, '');
+        if (!base) return err(res, 400, '请先填写 Base URL');
+        base = base.replace(/\/chat\/completions$/, '');
+        const cands = [`${base}/models`];
+        if (!/\/v1$/.test(base)) cands.push(`${base}/v1/models`);
+        let lastErr = '';
+        for (const u of cands) {
+          try {
+            const ctrl = new AbortController();
+            const t = setTimeout(() => ctrl.abort(), 30000);
+            const resp = await fetch(u, {
+              headers: { Accept: 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) },
+              signal: ctrl.signal,
+            });
+            clearTimeout(t);
+            const text = await resp.text();
+            if (resp.ok) {
+              try {
+                const data = JSON.parse(text);
+                if (Array.isArray(data.data)) return json(res, 200, data);
+              } catch {}
+              return err(res, 400, '接口返回了非预期格式');
+            }
+            if (resp.status === 401 || resp.status === 403) return err(res, 401, `HTTP ${resp.status}：请先填写正确的 API Key`);
+            lastErr = `HTTP ${resp.status}：${text.slice(0, 150)}`;
+          } catch (e) {
+            lastErr = `网络错误：${e.message}`;
+          }
+        }
+        return err(res, 400, lastErr || '获取模型列表失败');
+      }
       // 版本历史
       if (pathname.match(/^\/api\/ai\/agents\/\d+\/history$/) && req.method === 'GET') {
         const id = Number(pathname.split('/')[4]);
@@ -1883,6 +1991,62 @@ const server = http.createServer(async (req, res) => {
         const r = await callAgent(agent, userContent);
         if (r.error) return json(res, 200, { ok: false, error: r.error });
         return json(res, 200, { ok: true, content: r.content });
+      }
+      // ---- 技能库（用户导入技能包；App 端同构路由见 public/local-handler.js） ----
+      // 列表（不含 text 全文；附 inUse 引用标记）
+      if (pathname === '/api/skills' && req.method === 'GET') {
+        return json(res, 200, listUserSkills());
+      }
+      // 新增/覆盖技能（同名 = 覆盖）；被智能体引用时清空解析缓存（覆盖前的旧技能内容仍在缓存里）
+      if (pathname === '/api/skills' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const r = addUserSkill(JSON.parse(body || '{}'));
+        if (r.error) return err(res, 400, r.error);
+        if (r.referenced) {
+          const n = pdb.prepare('DELETE FROM ai_explains').run().changes;
+          if (n > 0) console.log(`[skills] 技能「${r.name}」被智能体引用，已清空 ${n} 条题目解析缓存`);
+        }
+        return json(res, 200, { ok: true, name: r.name, replaced: r.replaced, referenced: r.referenced });
+      }
+      // 删除技能（被引用智能体的 skill 字段保留原值，解析回落纯文本 → 清缓存避免旧解析残留）
+      if (pathname.match(/^\/api\/skills\/[^/]+$/) && req.method === 'DELETE') {
+        const name = decodeURIComponent(pathname.split('/')[3]);
+        const r = deleteUserSkill(name);
+        if (r.error) return err(res, 400, r.error);
+        const n = pdb.prepare('DELETE FROM ai_explains').run().changes;
+        if (n > 0) console.log(`[skills] 删除技能「${name}」，已清空 ${n} 条题目解析缓存`);
+        return json(res, 200, r);
+      }
+      // URL 代理拉取（Web 浏览器直连被 CORS 挡住时的兜底；App 端走 CapacitorHttp 直连无此问题）
+      if (pathname === '/api/skills/fetch' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { url } = JSON.parse(body || '{}');
+        const u = String(url || '').trim();
+        if (!/^https?:\/\//i.test(u)) return err(res, 400, '仅支持 http(s) 链接');
+        try {
+          const ctrl = new AbortController();
+          const t = setTimeout(() => ctrl.abort(), 30000);
+          const resp = await fetch(u, { signal: ctrl.signal, redirect: 'follow' });
+          clearTimeout(t);
+          if (!resp.ok) return err(res, 400, `拉取失败：HTTP ${resp.status}`);
+          const contentLength = Number(resp.headers.get('content-length') || 0);
+          if (contentLength > 20 * 1024 * 1024) return err(res, 400, '文件过大（>20MB）');
+          const buf = Buffer.from(await resp.arrayBuffer());
+          if (buf.length > 20 * 1024 * 1024) return err(res, 400, '文件过大（>20MB）');
+          const contentType = String(resp.headers.get('content-type') || '');
+          const isZip = /zip|octet-stream/i.test(contentType) || (buf[0] === 0x50 && buf[1] === 0x4b);
+          const isJson = /json/i.test(contentType);
+          const filename = decodeURIComponent(String(u).split('/').pop().split('?')[0] || '');
+          return json(res, 200, {
+            kind: isZip ? 'zip' : (isJson ? 'json' : 'text'),
+            data: isZip ? buf.toString('base64') : buf.toString('utf8'),
+            filename,
+          });
+        } catch (e) {
+          return err(res, 400, `拉取失败：${e.message}`);
+        }
       }
       // 行测 AI 解析（真实调用行测解析 AI，按题目 + 作答情况生成解析）
       if (pathname === '/api/ai/explain' && req.method === 'POST') {
@@ -2106,13 +2270,34 @@ const server = http.createServer(async (req, res) => {
         return json(res, 200, { notice: '识别完成', text: v.content });
       }
       // ---- 自定义题库：题目筛选整理（custom-question-parser） ----
+      // 纯文本 → 文本模型结构化；带图片 → 视觉模型直接看图出结构化 JSON（AI 优先，失败自动降级 OCR→文本结构化）
       if (pathname === '/api/ai/structure' && req.method === 'POST') {
         let body = '';
         for await (const chunk of req) body += chunk;
-        const { text } = JSON.parse(body || '{}');
-        if (!text || !String(text).trim()) return err(res, 400, '缺少文本');
+        const { text, image } = JSON.parse(body || '{}');
         const agent = getAgent('custom-question-parser');
         if (!agent) return json(res, 200, { notice: '题目解析员未启用，请到 AI 设置页配置', text: null });
+        const hasImage = String(image || '').startsWith('data:image');
+        if (!hasImage && !String(text || '').trim()) return err(res, 400, '缺少文本或图片');
+        if (hasImage) {
+          const m = String(image).match(/^data:(image\/[a-z+]+);base64,(.+)$/i);
+          if (!m) return err(res, 400, '图片格式不正确');
+          const buf = Buffer.from(m[2], 'base64');
+          if (buf.length > 8 * 1024 * 1024) return err(res, 400, '图片过大（≤8MB）');
+          if (!agent.api_key || !agent.base_url) {
+            return json(res, 200, { notice: '解析 AI 尚未配置 api_key，请到「AI 设置」页面填写后重试。', text: null });
+          }
+          const img = { mime: m[1], b64: m[2], url: '(上传图片)', size: buf.length };
+          // AI 优先：视觉模型直接看图理解整张图片
+          const v = await callVision(agent.api_key, agent.base_url, agent.model, [img], 'structure');
+          if (v.content) return json(res, 200, { notice: '解析完成', text: v.content });
+          // 降级：OCR 转文字 → 文本模型结构化
+          const ocr = await callVision(agent.api_key, agent.base_url, agent.model, [img], 'ocr');
+          if (ocr.error) return json(res, 200, { notice: v.error || ocr.error, text: null });
+          const r = await callAgent(agent, ocr.content);
+          if (r.error) return json(res, 200, { notice: r.error, text: null });
+          return json(res, 200, { notice: '解析完成', text: r.content });
+        }
         const r = await callAgent(agent, String(text));
         if (r.error) return json(res, 200, { notice: r.error, text: null });
         return json(res, 200, { notice: '解析完成', text: r.content });

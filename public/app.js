@@ -143,11 +143,18 @@ const ICO = {
   lightbulb: '<path d="M15 14c.2-1 .7-1.7 1.5-2.5 1-.9 1.5-2.2 1.5-3.5A6 6 0 0 0 6 8c0 1 .2 2.2 1.5 3.5.7.7 1.3 1.5 1.5 2.5"/><path d="M9 18h6"/><path d="M10 22h4"/>',
   trendingUp: '<path d="M3 17l6-6 4 4 8-8"/><path d="M14 7h7v7"/>',
   save: '<path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2Z"/><path d="M17 21v-8H7v8"/><path d="M7 3v5h8"/>',
+  sliders: '<path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3"/><path d="M1 14h6M9 8h6M17 16h6"/>',
   flask: '<path d="M10 2v7.527a2 2 0 0 1-.211.896L4.72 20.55a1 1 0 0 0 .9 1.45h12.76a1 1 0 0 0 .9-1.45l-5.069-10.127A2 2 0 0 1 14 9.527V2"/><path d="M8.5 2h7"/><path d="M7 16h10"/>',
   history: '<path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/>',
   clock: '<circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/>',
   hourglass: '<path d="M5 22h14"/><path d="M5 2h14"/><path d="M17 22v-4.172a2 2 0 0 0-.586-1.414L12 12l-4.414 4.414A2 2 0 0 0 7 17.828V22"/><path d="M7 2v4.172a2 2 0 0 0 .586 1.414L12 12l4.414-4.414A2 2 0 0 0 17 6.172V2"/>',
   flag: '<path d="M4 15s1-1 4-1 5 2 8 2 4-1 4-1V3s-1 1-4 1-5-2-8-2-4 1-4 1Z"/><path d="M4 22v-7"/>',
+  plus: '<path d="M12 5v14M5 12h14"/>',
+  upload: '<path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="m17 8-5-5-5 5"/><path d="M12 3v12"/>',
+  clipboard: '<rect x="8" y="2" width="8" height="4" rx="1"/><path d="M16 4h2a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2H6a2 2 0 0 1-2-2V6a2 2 0 0 1 2-2h2"/>',
+  database: '<ellipse cx="12" cy="5" rx="9" ry="3"/><path d="M3 5v14a9 3 0 0 0 18 0V5"/><path d="M3 12a9 3 0 0 0 18 0"/>',
+  merge: '<circle cx="6" cy="18" r="3"/><circle cx="18" cy="6" r="3"/><path d="M6 21V9a9 9 0 0 0 9 9"/>',
+  scissors: '<circle cx="6" cy="6" r="3"/><path d="M8.12 8.12 12 12"/><path d="M20 4 8.12 15.88"/><circle cx="6" cy="18" r="3"/><path d="M14.8 14.8 20 20"/>',
 };
 const ico = (name, size = 18, sw = 2) =>
   `<svg viewBox="0 0 24 24" width="${size}" height="${size}" fill="none" stroke="currentColor" stroke-width="${sw}" stroke-linecap="round" stroke-linejoin="round">${ICO[name] || ''}</svg>`;
@@ -158,6 +165,8 @@ const store = {
   wrong: JSON.parse(localStorage.getItem('wrong_questions') || '[]'), // [{id, content, answer, myAnswer, subject, chapter, time}]
   fav: new Set(), // 收藏题 id（服务端跨设备同步）
   navStack: [], // 导航栈：{name, subject, category, paperId, chapter, mock}，goBack 时逐级回退
+  // 自定义刷题筛选（2026-08）：面板保存后，专项练习模块刷题按此出题；mode=practice|recite，year=all|3|5|10，difficulty=easy|balanced|hard|random
+  customConfig: Object.assign({ mode: 'practice', year: '10', difficulty: 'random' }, JSON.parse(localStorage.getItem('custom_practice_cfg') || '{}')),
 };
 
 // ---------- 答题辅助 ----------
@@ -291,7 +300,7 @@ function stampCost(idx) {
   s.answers[idx].costMs = (s.answers[idx].costMs || 0) + cost;
   delete q._t0;
 }
-/** 记录答案并（客观题）自动下一题 */
+/** 记录答案并（客观题）自动下一题；背题模式（backMode）判分展示反馈后不跳题 */
 function recordAnswer(q, sel) {
   const s = store.state;
   stampCost(s.idx);
@@ -299,6 +308,11 @@ function recordAnswer(q, sel) {
   if (!s.answers[s.idx]) s.answers[s.idx] = { selected: null, correct: null, costMs: 0 };
   s.answers[s.idx].selected = (Array.isArray(sel) ? sel : [sel]).map(Number).sort((a, b) => a - b);
   s.answers[s.idx].correct = j.valid ? j.ok : null; // 无答案题 correct=null
+  // 背题模式：展示对错 + 解析，选项锁定，不自动跳题、不自动交卷
+  if (s.backMode) {
+    showAnswerFeedback(q, j, s.answers[s.idx].selected);
+    return;
+  }
   // 最后一题：无漏答自动交卷
   if (s.idx >= s.questions.length - 1) {
     const unanswered = s.questions.map((_, i) => i).filter((i) => !s.answers[i] || s.answers[i].selected == null);
@@ -308,6 +322,41 @@ function recordAnswer(q, sel) {
   }
   s.idx++;
   renderQuestion();
+}
+
+/** 背题模式判分反馈：对错横幅 + 答案对照 + 解析 + 选项锁定 + 「下一题」按钮（不自动跳转） */
+function showAnswerFeedback(q, j, selected) {
+  const s = store.state;
+  const view = $('#view');
+  // 选项锁定 + 对错着色（正确项绿、误选项红）
+  view.querySelectorAll('.option').forEach((b, i) => {
+    b.classList.add('locked');
+    if (j.correct.includes(i)) b.classList.add('correct');
+    else if (selected.includes(i)) b.classList.add('wrong');
+  });
+  const cf = $('#btn-confirm');
+  if (cf) cf.disabled = true;
+  const old = $('#answer-feedback');
+  if (old) old.remove();
+  const box = el('div', 'answer-box');
+  box.id = 'answer-feedback';
+  const okTxt = j.valid ? (j.ok ? '回答正确' : '回答错误') : '本题无标准答案';
+  box.innerHTML = `
+    <div class="ab-title ${j.valid ? (j.ok ? 'ok' : 'no') : ''}">${ico(j.valid ? (j.ok ? 'checkCircle' : 'xCircle') : 'alert', 16)} ${okTxt}</div>
+    <div class="answer-cmp" style="margin:0 0 10px">
+      <span class="cmp-item"><i class="cmp-dot mine"></i>我的答案 <b>${selected.map((x) => LETTERS[x]).join('') || '—'}</b></span>
+      <span class="cmp-item"><i class="cmp-dot right"></i>正确答案 <b>${j.correct.map((x) => LETTERS[x]).join('') || '见解析'}</b></span>
+    </div>
+    ${q.analysis ? `<div class="ab-body" style="margin:0 0 10px">${esc(q.analysis)}</div>` : ''}
+    <button class="btn btn-ghost btn-block" style="margin-bottom:6px" id="btn-ai-explain-fb">${ico('sparkles', 15)} AI 解析本题（考点/错项/技巧）</button>
+    <div id="ai-explain-result-fb" style="display:none"></div>
+    <button class="btn btn-primary btn-block" id="btn-fb-next">下一题</button>
+  `;
+  view.appendChild(box);
+  box.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  $('#btn-ai-explain-fb').onclick = () => explainQuestion(q, selected, j.correct, box);
+  $('#btn-fb-next').onclick = () => { box.remove(); nextQuestion(); };
+  if (s.idx >= s.questions.length - 1) toast('已是最后一题，点「交卷」结束');
 }
 
 function saveWrong() {
@@ -342,6 +391,7 @@ function goBack() {
   else if (top.name === 'fav') renderFavorites();
   else if (top.name === 'custom-bank') renderCustomBank(true);
   else if (top.name === 'custom-batch') renderCustomBatch(top.batchId, true);
+  else if (top.name === 'skill-import') renderAiSettings();
   else renderHome();
 }
 
@@ -486,7 +536,7 @@ async function renderHome() {
     const grid = el('div', 'subject-grid');
     // 自定义题库入口卡（2026-08-15：文件导入 → 批次 → 刷题）
     const customCard = el('div', 'subject-card custom-entry', `
-      <span class="emoji tint-cyan"><svg viewBox="0 0 24 24" width="30" height="30" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg></span>
+      <span class="emoji tint-cyan">${ico('database', 30)}</span>
       <div class="name">自定义题库</div>
       <div class="desc">导入 PDF / Excel / Word / TXT 题目，自由刷题</div>
       <div class="stat-line"><span id="custom-batch-count">加载中…</span></div>
@@ -574,9 +624,9 @@ async function renderCustomBank(skipNav) {
     const { batches } = await api('/api/custom/batches');
     view.innerHTML = '';
     const head = el('div', 'custom-head', `
-      <button class="btn primary" id="cb-import">＋ 导入题目</button>
-      ${batches.length > 1 ? '<button class="btn" id="cb-merge">合并批次</button>' : ''}
-      <button class="btn" id="cb-refresh">刷新</button>
+      <button class="btn btn-primary" id="cb-import" style="flex:0 0 auto">${ico('plus', 15)} 导入题目</button>
+      ${batches.length > 1 ? `<button class="btn btn-ghost" id="cb-merge" style="flex:0 0 auto">${ico('merge', 15)} 合并批次</button>` : ''}
+      <button class="btn btn-ghost" id="cb-refresh" style="flex:0 0 auto">${ico('refresh', 15)} 刷新</button>
     `);
     view.appendChild(head);
     $('#cb-import').onclick = renderImport;
@@ -587,8 +637,8 @@ async function renderCustomBank(skipNav) {
       const bar = el('div', 'custom-toolbar', `
         <div class="custom-hint">勾选要合并的批次（至少 2 个）→ 执行合并（题目并入最先勾选的批次，其余删除）</div>
         <div class="custom-toolbar-btns">
-          <button class="btn primary" id="cb-do-merge" disabled>执行合并</button>
-          <button class="btn" id="cb-cancel-merge">取消</button>
+          <button class="btn btn-primary" id="cb-do-merge" disabled style="flex:0 0 auto">${ico('merge', 15)} 执行合并</button>
+          <button class="btn btn-ghost" id="cb-cancel-merge" style="flex:0 0 auto">取消</button>
         </div>
       `);
       view.appendChild(bar);
@@ -605,26 +655,32 @@ async function renderCustomBank(skipNav) {
       };
     }
     if (batches.length === 0) {
-      view.appendChild(el('div', 'empty', '还没有批次。点「＋ 导入题目」上传 PDF / Excel / Word / TXT 开始。'));
+      view.appendChild(el('div', 'empty', '<span class="empty-ico">' + ico('database', 36) + '</span>还没有批次，点「导入题目」上传 PDF / Excel / Word / TXT 开始。'));
       return;
     }
     const list = el('div', 'custom-list');
+    const CB_TINTS = ['tint-violet', 'tint-green', 'tint-orange', 'tint-blue'];
     for (const b of batches) {
       const card = el('div', 'custom-batch', `
-        ${customMergeMode ? `<label class="cb-check-wrap"><input type="checkbox" class="cb-check" data-id="${b.id}"><span></span></label>` : ''}
-        <div class="cb-main" data-go="${b.id}">
-          <div class="cb-name">${esc(b.name)}${(b.subject && b.subject !== '自定义') ? `<span class="cb-subject">${esc(b.subject)}</span>` : ''}</div>
-          <div class="cb-meta">${b.count} 题 · ${esc(b.created_at || '')}</div>
+        <div class="cb-top" data-go="${b.id}">
+          ${customMergeMode ? `<label class="cb-check-wrap"><input type="checkbox" class="cb-check" data-id="${b.id}"><span></span></label>` : ''}
+          <span class="cb-ico ${CB_TINTS[b.id % 4]}">${ico('folderTree', 24)}</span>
+          <div class="cb-main">
+            <div class="cb-name">${esc(b.name)}${(b.subject && b.subject !== '自定义') ? `<span class="cb-subject">${esc(b.subject)}</span>` : ''}</div>
+            <div class="cb-meta">${b.count} 题 · ${esc(b.created_at || '')}</div>
+          </div>
         </div>
         <div class="cb-actions">
-          <button class="mini primary" data-act="practice">刷题</button>
-          <button class="mini" data-act="split">拆分</button>
-          <button class="mini" data-act="rename">改名</button>
-          <button class="mini danger" data-act="del">删除</button>
+          <button class="mini primary" data-act="practice">${ico('play', 13)} 刷题</button>
+          <button class="mini" data-act="split">${ico('scissors', 13)} 拆分</button>
+          <button class="mini" data-act="rename">${ico('pen', 13)} 改名</button>
+          <button class="mini danger" data-act="del">${ico('trash', 13)} 删除</button>
         </div>
       `);
       const check = card.querySelector('.cb-check');
       if (check) {
+        const wrap = check.closest('.cb-check-wrap');
+        if (wrap) wrap.onclick = (e) => e.stopPropagation();
         check.onchange = () => {
           if (check.checked) customSel.add(Number(check.dataset.id)); else customSel.delete(Number(check.dataset.id));
           const btn = $('#cb-do-merge');
@@ -663,8 +719,8 @@ async function renderCustomBatch(id, skipNav) {
         <div class="cb-name big">${esc(batch.name)} <span class="cb-meta">${questions.length} 题</span></div>
       </div>
       <div class="custom-toolbar-btns">
-        <button class="btn primary" id="cbq-practice">开始刷题</button>
-        ${questions.length > 1 ? '<button class="btn" id="cbq-split">拆分勾选题目</button>' : ''}
+        <button class="btn btn-primary" id="cbq-practice" style="flex:0 0 auto">${ico('play', 15)} 开始刷题</button>
+        ${questions.length > 1 ? `<button class="btn btn-ghost" id="cbq-split" style="flex:0 0 auto">${ico('scissors', 15)} 拆分题目</button>` : ''}
       </div>
     `);
     view.appendChild(head);
@@ -675,8 +731,8 @@ async function renderCustomBatch(id, skipNav) {
       const bar = el('div', 'custom-toolbar', `
         <div class="custom-hint">勾选要拆出的题目 → 拆分为新批次（其余留在原批次）</div>
         <div class="custom-toolbar-btns">
-          <button class="btn primary" id="cbq-do-split" disabled>拆出为新批次</button>
-          <button class="btn" id="cbq-cancel-split">取消</button>
+          <button class="btn btn-primary" id="cbq-do-split" disabled style="flex:0 0 auto">${ico('scissors', 15)} 拆出为新批次</button>
+          <button class="btn btn-ghost" id="cbq-cancel-split" style="flex:0 0 auto">取消</button>
         </div>
       `);
       view.appendChild(bar);
@@ -687,10 +743,10 @@ async function renderCustomBatch(id, skipNav) {
         const sheet = customSheet(`
           <h3>拆分为新批次</h3>
           <label>新批次名称</label>
-          <input type="text" id="split-name" value="${esc(batch.name)}-拆分1" placeholder="${esc(batch.name)}-拆分N">
+          <input type="text" class="field-input" id="split-name" value="${esc(batch.name)}-拆分1" placeholder="${esc(batch.name)}-拆分N">
           <div class="sheet-actions">
-            <button class="btn primary" id="split-ok">确认拆分</button>
-            <button class="btn" id="split-cancel">取消</button>
+            <button class="btn btn-primary" id="split-ok" style="flex:0 0 auto">${ico('scissors', 15)} 确认拆分</button>
+            <button class="btn btn-ghost" id="split-cancel" style="flex:0 0 auto">取消</button>
           </div>
         `);
         $('#split-cancel').onclick = () => sheet.remove();
@@ -707,17 +763,17 @@ async function renderCustomBatch(id, skipNav) {
       };
     }
     if (questions.length === 0) {
-      view.appendChild(el('div', 'empty', '该批次暂无题目。'));
+      view.appendChild(el('div', 'empty', '<span class="empty-ico">' + ico('fileText', 36) + '</span>该批次暂无题目。'));
       return;
     }
     const list = el('div', 'custom-qlist');
     questions.forEach((q, i) => {
       const row = el('div', 'custom-q', `
-        ${customSplitMode ? `<label class="cb-check-wrap"><input type="checkbox" class="cq-check" data-id="${q.id}"><span></span></label>` : ''}
-        <div class="cq-body">
+        <div class="cq-body" data-go="detail">
+          ${customSplitMode ? `<label class="cb-check-wrap"><input type="checkbox" class="cq-check" data-id="${q.id}"><span></span></label>` : ''}
           <div class="cq-no">${i + 1}</div>
           <div class="cq-main">
-            <div class="cq-prompt">${esc((q.prompt || '（空题干）').slice(0, 80))}</div>
+            <div class="cq-prompt">${esc(q.prompt || '（空题干）')}</div>
             <div class="cq-meta">
               ${q.material ? '<span class="tag">材料</span>' : ''}
               <span class="tag">${q.options.length ? q.options.length + ' 选项' : '无选项'}</span>
@@ -727,12 +783,17 @@ async function renderCustomBatch(id, skipNav) {
           </div>
         </div>
         <div class="cq-actions">
-          <button class="mini" data-a="edit">编辑</button>
-          <button class="mini danger" data-a="del">删除</button>
+          <button class="mini" data-a="edit">${ico('pen', 13)} 编辑</button>
+          <button class="mini danger" data-a="del">${ico('trash', 13)} 删除</button>
         </div>
       `);
       const check = row.querySelector('.cq-check');
-      if (check) check.onchange = () => { if (check.checked) customSel.add(Number(check.dataset.id)); else customSel.delete(Number(check.dataset.id)); const b = $('#cbq-do-split'); if (b) b.disabled = customSel.size === 0; };
+      if (check) {
+        const wrap = check.closest('.cb-check-wrap');
+        if (wrap) wrap.onclick = (e) => e.stopPropagation();
+        check.onchange = () => { if (check.checked) customSel.add(Number(check.dataset.id)); else customSel.delete(Number(check.dataset.id)); const b = $('#cbq-do-split'); if (b) b.disabled = customSel.size === 0; };
+      }
+      row.querySelector('[data-go="detail"]').onclick = () => customQuestionDetail(q, batch.name);
       row.querySelector('[data-a="edit"]').onclick = () => customEditQuestion(q, batch.name);
       row.querySelector('[data-a="del"]').onclick = () => customDeleteQuestion(q);
       list.appendChild(row);
@@ -768,16 +829,30 @@ async function renderImport() {
   const view = $('#view');
   view.innerHTML = `
     <div class="card">
-      <h3>选择文件（可多选）</h3>
-      <p class="muted">支持 PDF（扫描版自动识图）、Excel（.xlsx/.xls，固定列或自由格式）、Word（.docx）、TXT、图片（jpg/png/webp 等，自动识别图中文字）。一次导入 = 一个批次。</p>
-      <input type="file" id="import-file" accept=".pdf,.xlsx,.xls,.txt,.docx,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple>
+      <div class="import-head">
+        <span class="import-ico tint-blue">${ico('upload', 22)}</span>
+        <div>
+          <h3>选择文件（可多选）</h3>
+          <p class="muted">支持 PDF（扫描版自动识图）、Excel（.xlsx/.xls）、Word（.docx）、TXT、图片。AI 直接理解整张图/全文并拆分题干、选项、答案、解析；未配置 AI 时自动使用本地解析。一次导入 = 一个模块。</p>
+        </div>
+      </div>
+      <label class="import-dropzone" id="import-drop" for="import-file">
+        <b>${ico('upload', 26)} 点击选择或拖拽文件到此处</b>
+        <span>可多选；图片/扫描版 PDF 由 AI 识图解析，约 5~20 秒/张</span>
+      </label>
+      <input type="file" id="import-file" class="import-file-input" accept=".pdf,.xlsx,.xls,.txt,.docx,.jpg,.jpeg,.png,.webp,.bmp,.gif" multiple>
       <div id="import-progress" class="import-progress"></div>
     </div>
     <div class="card" style="margin-top:12px">
-      <h3>或直接粘贴文字</h3>
-      <p class="muted">粘贴题目文本（含题干/选项/答案/解析，可多题），点「解析文字」自动切分。</p>
-      <textarea id="import-paste" rows="6" style="width:100%;box-sizing:border-box;border:1.5px solid var(--border);border-radius:10px;padding:10px;font-size:13.5px;font-family:inherit;resize:vertical" placeholder="示例：&#10;1. 我国现行宪法是哪一年颁布的？&#10;A. 1949年  B. 1954年  C. 1978年  D. 1982年&#10;答案：D&#10;解析：现行宪法是1982年颁布的。"></textarea>
-      <div style="margin-top:10px"><button class="btn primary" id="import-paste-btn">解析文字</button></div>
+      <div class="import-head">
+        <span class="import-ico tint-violet">${ico('clipboard', 22)}</span>
+        <div>
+          <h3>或直接粘贴文字</h3>
+          <p class="muted">粘贴题目文本（含题干/选项/答案/解析，可多题），点「解析文字」由 AI 自动拆分。</p>
+        </div>
+      </div>
+      <textarea id="import-paste" class="field-area" rows="6" placeholder="示例：&#10;1. 我国现行宪法是哪一年颁布的？&#10;A. 1949年  B. 1954年  C. 1978年  D. 1982年&#10;答案：D&#10;解析：现行宪法是1982年颁布的。"></textarea>
+      <div class="import-actions"><button class="btn btn-primary" id="import-paste-btn" style="flex:0 0 auto">${ico('zap', 15)} 解析文字</button></div>
     </div>
     <div id="import-preview"></div>
   `;
@@ -810,37 +885,50 @@ async function renderImport() {
     progress.innerHTML = '';
     customRenderPreview(all, files.map((f) => f.name.replace(/\.[^.]+$/, '')).join('+') || '未命名批次');
   };
+  const drop = $('#import-drop');
+  if (drop) {
+    ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('drag'); }));
+    ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('drag'); }));
+    drop.addEventListener('drop', (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      const input = $('#import-file');
+      try { input.files = files; } catch (_) { return; }
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
 }
 
 async function customParseFile(file) {
   const ext = (file.name.split('.').pop() || '').toLowerCase();
   const P = () => import('./lib/custom-parser.js');
-  if (ext === 'txt') { const { parseTxt } = await P(); const text = await file.text(); return { questions: parseTxt(text), raw: text }; }
-  if (ext === 'docx') { const { docxToText, parseTxt } = await P(); const text = await docxToText(file); return { questions: parseTxt(text), raw: text }; }
+  if (ext === 'txt') { const text = await file.text(); return customAiStructureText(text); }
+  if (ext === 'docx') { const { docxToText } = await P(); const text = await docxToText(file); return customAiStructureText(text); }
   if (ext === 'doc') throw new Error('旧版 .doc 请用 Word 另存为 .docx 或 TXT 后再导入');
   if (ext === 'xlsx' || ext === 'xls') {
-    const { parseExcel, aiStructure } = await P();
+    const { parseExcel } = await P();
     const XLSX = window.XLSX;
     if (!XLSX) throw new Error('Excel 解析库未加载，请刷新页面重试');
     const wb = XLSX.read(await file.arrayBuffer());
     const ws = wb.Sheets[wb.SheetNames[0]];
     const rows = XLSX.utils.sheet_to_json(ws, { header: 1, defval: '' });
     const r = parseExcel(rows);
-    const raw = r.freeText || rows.map((rr) => rr.filter(Boolean).join(' | ')).filter(Boolean).join('\n');
-    if (r.questions.length && r.questions.some((q) => q.prompt)) return { questions: r.questions, raw };
-    if (r.freeText && r.freeText.trim().length > 20) {
-      const ai = await customAiStructure(r.freeText);
-      if (ai.length) return { questions: ai, raw: r.freeText };
+    // 有表头：按列确定性映射，无需 AI
+    if (r.fixedCols && r.questions.length && r.questions.some((q) => q.prompt)) {
+      return { questions: r.questions, raw: rows.map((rr) => rr.filter(Boolean).join(' | ')).filter(Boolean).join('\n'), source: 'excel' };
     }
-    return { questions: r.questions, raw };
+    // 自由格式：AI 优先，回退规则
+    const freeText = r.freeText || rows.map((rr) => rr.filter(Boolean).join(' | ')).filter(Boolean).join('\n');
+    if (String(freeText).trim().length > 20) return customAiStructureText(freeText);
+    return { questions: r.questions, raw: freeText };
   }
-  if (ext === 'pdf') { const r = await customParsePdf(file); return { questions: r, raw: '' }; }
-  // 图片（jpg/png/webp/bmp/gif）：OCR 转文字 → 规则切分 + AI 兜底
+  if (ext === 'pdf') return customParsePdf(file);
+  // 图片（jpg/png/webp/bmp/gif）：AI 直接看图出题（AI 优先），失败自动降级 OCR→文本 AI→规则
   if (['jpg', 'jpeg', 'png', 'webp', 'bmp', 'gif'].includes(ext)) return customParseImage(file);
   throw new Error('不支持的格式：' + (ext || '未知'));
 }
 
-/** 图片 OCR：读 dataURL → 识图转写员（合并后 image-reader）→ 文本 → 规则切分 + AI 兜底 */
+/** 图片导入：读 dataURL → AI 直接看图出题（能理解整张图的布局与内容） */
 async function customParseImage(file) {
   const dataUrl = await new Promise((res, rej) => {
     const fr = new FileReader();
@@ -848,31 +936,94 @@ async function customParseImage(file) {
     fr.onerror = () => rej(new Error('读取图片失败'));
     fr.readAsDataURL(file);
   });
-  const r = await api('/api/ai/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl, subject: '自定义' }) });
-  if (!r.text) throw new Error(r.notice || 'OCR 识别失败');
-  const { parseTxt } = await import('./lib/custom-parser.js');
-  const qs = parseTxt(r.text);
-  if (qs.length) return { questions: qs, raw: r.text };
-  return { questions: await customAiStructure(r.text), raw: r.text };
+  return customAiStructureImage(dataUrl);
 }
 
-/** 粘贴文字解析：规则切分优先，失败走 AI 结构化 */
-async function customParsePasted(text) {
-  const { parseTxt } = await import('./lib/custom-parser.js');
+/** 图片 AI 结构化：视觉模型直接看图 → JSON；失败降级 OCR→文本 AI→本地规则 */
+async function customAiStructureImage(dataUrl) {
+  let jsonText = '';
+  let notice = '';
+  try {
+    const res = await api('/api/ai/structure', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl }) });
+    if (res.text) jsonText = res.text; else notice = res.notice || '';
+  } catch (e) { notice = e.message; }
+  if (jsonText) {
+    const qs = await customAiJsonToQuestions(jsonText);
+    if (qs.length) return { questions: qs, raw: '', source: 'ai-image' };
+  }
+  // 降级：OCR 转文字 → 文本 AI → 规则
+  let ocrText = '';
+  try {
+    const r = await api('/api/ai/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: dataUrl, subject: '自定义' }) });
+    if (r.text) ocrText = r.text; else notice = notice || r.notice || 'OCR 识别失败';
+  } catch (e) { notice = notice || e.message; }
+  if (ocrText) {
+    const t = await customAiStructureText(ocrText);
+    if (t.questions.length) return { questions: t.questions, raw: ocrText, source: 'ocr-' + (t.source === 'ai' ? 'ai' : 'local') };
+  }
+  return { questions: [{ prompt: `（图片解析失败：${notice || '未知错误'}）`, material: '', options: [], answer: '', answer_index: -1, analysis: '', failed: true }], raw: '', source: 'failed' };
+}
+
+/** 文本 AI 结构化（AI 优先）：分批 ≤10 段调题目解析员；AI 未配置/失败/无结果 → 回退本地规则 */
+async function customAiStructureText(text) {
+  const P = await import('./lib/custom-parser.js');
+  const { aiStructure, parseTxt } = P;
+  const chunks = String(text).split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
+  let ai = [];
+  let aiFailed = false;
+  if (chunks.length) {
+    try {
+      ai = await aiStructure(chunks, async (input) => {
+        const res = await api('/api/ai/structure', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: input }) });
+        if (!res.text) throw new Error(res.notice || '解析失败');
+        return res.text;
+      });
+    } catch (e) { aiFailed = true; }
+  }
+  const usable = ai.filter((q) => (q.prompt || '').trim() && !q.failed);
+  if (!aiFailed && usable.length) return { questions: ai, raw: text, source: 'ai' };
+  // AI 失败/无结果 → 回退本地规则（未配置 key / 网络失败 / 模型输出无效时保证可用）
   const qs = parseTxt(text);
-  if (qs.length) return { questions: qs, raw: text };
-  return { questions: await customAiStructure(text), raw: text };
+  if (qs.length) return { questions: qs, raw: text, source: 'local' };
+  return { questions: aiFailed ? ai : [], raw: text };
 }
 
-/** PDF：文本层优先；扫描页转图走识图转写员（合并后 image-reader）
+/** 把 AI 返回的题目 JSON 文本解析为题目数组（提取 + 规范化答案） */
+async function customAiJsonToQuestions(jsonText) {
+  const { extractJson, normalizeAnswer } = await import('./lib/custom-parser.js');
+  const data = extractJson(jsonText);
+  const list = data && typeof data === 'object'
+    ? (Array.isArray(data) ? data : (Array.isArray(data.questions) ? data.questions : []))
+    : [];
+  return list.map((q) => {
+    const { answer, answer_index, options } = normalizeAnswer(q?.answer, Array.isArray(q?.options) ? q.options : []);
+    return {
+      prompt: String(q?.prompt ?? '').trim() || '',
+      material: String(q?.material ?? '').trim() || '',
+      options,
+      answer,
+      answer_index,
+      // 剥「解析：」前缀（AI 忠实原文时可能带上，展示会与「解析」标签重复；与规则解析器行为一致）
+      analysis: String(q?.analysis ?? '').trim().replace(/^(?:【?\s*解析\s*】?\s*[:：]?\s*)/, '') || '',
+      failed: false,
+    };
+  }).filter((q) => q.prompt);
+}
+
+/** 粘贴文字解析：AI 优先，回退本地规则 */
+async function customParsePasted(text) {
+  return customAiStructureText(text);
+}
+
+/** PDF：文本层 → AI 优先；扫描页逐页转图 → 图片 AI 结构化（失败页降级）
  * 文本层拼接用 hasEOL 保留换行（pdf.js items 是字符级片段，join(' ') 会丢换行导致整页成一行） */
 async function customParsePdf(file) {
-  const { parseTxt, dedupeQuestions } = await import('./lib/custom-parser.js');
+  const { dedupeQuestions } = await import('./lib/custom-parser.js');
   const pdfjs = await import('./vendor/pdfjs/pdf.min.mjs');
   pdfjs.GlobalWorkerOptions.workerSrc = './vendor/pdfjs/pdf.worker.min.mjs';
   const doc = await pdfjs.getDocument({ data: await file.arrayBuffer() }).promise;
   const texts = [];
-  const pendingOcr = [];
+  const pendingImgs = [];
   for (let p = 1; p <= doc.numPages; p++) {
     const page = await doc.getPage(p);
     const tc = await page.getTextContent();
@@ -884,65 +1035,60 @@ async function customParsePdf(file) {
     canvas.width = Math.min(viewport.width, 2600);
     canvas.height = Math.min(viewport.height, 2600);
     await page.render({ canvasContext: canvas.getContext('2d'), viewport }).promise;
-    pendingOcr.push(canvas.toDataURL('image/jpeg', 0.85));
+    pendingImgs.push(canvas.toDataURL('image/jpeg', 0.85));
   }
-  for (let i = 0; i < pendingOcr.length; i++) {
+  const all = [];
+  // 文本页：整卷一次 AI 结构化
+  if (texts.length) {
+    const r = await customAiStructureText(texts.join('\n\n'));
+    all.push(...r.questions);
+  }
+  // 扫描页：逐页图片 AI 看图出题
+  for (let i = 0; i < pendingImgs.length; i++) {
     try {
-      const r = await api('/api/ai/ocr', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ image: pendingOcr[i], subject: '自定义' }) });
-      if (r.text) texts.push(r.text.trim());
-      else texts.push(`【第 ${i + 1} 页扫描件：${r.notice || '识别失败'}】`);
-    } catch (e) { texts.push(`【第 ${i + 1} 页扫描件识别失败：${e.message}】`); }
+      const r = await customAiStructureImage(pendingImgs[i]);
+      all.push(...r.questions);
+    } catch (e) {
+      all.push({ prompt: `【第 ${i + 1} 页扫描件解析失败：${e.message}】`, material: '', options: [], answer: '', answer_index: -1, analysis: '', failed: true });
+    }
   }
-  const joined = texts.join('\n').trim();
-  // 过滤封面/页眉等无题结构的块（无选项且无答案且无解析）；保留真正题目
-  const qs = dedupeQuestions(parseTxt(joined)).filter((q) => q.options.length || q.answer || q.analysis);
-  if (qs.length) return qs;
-  if (joined) return customAiStructure(joined);
-  return [];
+  // 过滤封面/页眉等无题结构的块（无选项且无答案且无解析），保留真正题目与失败项
+  const qs = dedupeQuestions(all.filter((q) => (q.prompt || '').trim())).filter((q) => q.failed || q.options.length || q.answer || q.analysis);
+  return { questions: qs, raw: texts.join('\n\n') };
 }
 
-/** AI 结构化兜底（题目解析员 custom-question-parser，分批 ≤10 段） */
-async function customAiStructure(text) {
-  const { aiStructure } = await import('./lib/custom-parser.js');
-  const chunks = String(text).split(/\n{2,}/).map((s) => s.trim()).filter(Boolean);
-  if (!chunks.length) return [];
-  return aiStructure(chunks, async (input) => {
-    const res = await api('/api/ai/structure', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ text: input }) });
-    if (!res.text) throw new Error(res.notice || '解析失败');
-    return res.text;
-  });
-}
-
-/** 预览表格 + 确认导入 */
+/** 导入预览（卡片列表，导入前可逐题编辑/删除）+ 确认导入 */
 function customRenderPreview(qs, defaultName) {
   const box = $('#import-preview');
   if (!box) return;
   if (!qs.length) { box.innerHTML = '<div class="card"><h3>解析结果</h3><div class="empty">未解析出题目，请检查文件内容或格式。</div></div>'; return; }
+  const failedCount = qs.filter((q) => q.failed).length;
+  const nameNow = ((($('#import-name') || {}).value || '').trim()) || defaultName || '';
   box.innerHTML = `
     <div class="card">
-      <h3>解析结果：${qs.length} 题（<span class="muted">解析失败的题目会原样导入，可导入后在批次里编辑修正</span>）</h3>
-      <div class="custom-preview-scroll"><table class="custom-preview">
-        <thead><tr><th>#</th><th>提示</th><th>材料</th><th>选项</th><th>答案</th><th>解析</th><th></th></tr></thead>
-        <tbody>${qs.map((q, i) => `<tr class="${q.failed ? 'fail' : ''}">
-          <td>${i + 1}</td>
-          <td>${esc((q.prompt || '').slice(0, 60))}</td>
-          <td>${esc((q.material || '').slice(0, 40))}</td>
-          <td>${esc((q.options || []).join(' | ').slice(0, 40))}</td>
-          <td>${esc(q.answer ? customAnswerDisplay(q.answer, q.options) : '无答案')}</td>
-          <td>${esc((q.analysis || '').slice(0, 30))}</td>
-          <td>${q.failed ? '<span class="tag warn">待人工修正</span>' : ''}</td>
-        </tr>`).join('')}</tbody>
-      </table></div>
-      <div class="import-confirm">
-        <input type="text" id="import-name" placeholder="批次名称" value="${esc(defaultName)}">
-        <select id="import-subject" title="这批题属于哪个科目（影响刷题统计与错题本归属）">
-          <option value="">科目：不限（归入「自定义」）</option>
-          <option value="行测">行测</option>
-          <option value="职测">职测</option>
-          <option value="综应">综应</option>
-          <option value="申论">申论</option>
-        </select>
-        <button class="btn primary" id="import-ok">确认导入</button>
+      <div class="pv-head">
+        <div class="pv-title">解析结果 <span class="pv-count">${qs.length} 题</span>${failedCount ? `<span class="tag warn">${failedCount} 题待人工修正</span>` : ''}</div>
+        <p class="muted pv-hint">${failedCount ? '标记「待人工修正」的题目解析不完整，建议先点「编辑」检查后再导入。' : '每道题都可以在导入前点「编辑」微调内容。'}</p>
+      </div>
+      <div class="pv-confirm">
+        <div class="pv-name-row">
+          <label class="pv-name-label" for="import-name">模块名称</label>
+          <input type="text" class="field-input" id="import-name" value="${esc(nameNow)}" placeholder="给这批题起个名字，如：言语理解 第 3 章">
+          <p class="muted">一次导入 = 一个模块，导入后也可以随时改名。</p>
+        </div>
+        <div class="pv-meta-row">
+          <select id="import-subject" title="这批题属于哪个科目（影响刷题统计与错题本归属）">
+            <option value="">科目：不限（归入「自定义」）</option>
+            <option value="行测">行测</option>
+            <option value="职测">职测</option>
+            <option value="综应">综应</option>
+            <option value="申论">申论</option>
+          </select>
+          <button class="btn btn-primary" id="import-ok" style="flex:0 0 auto">${ico('checkCircle', 15)} 确认导入 ${qs.length} 题</button>
+        </div>
+      </div>
+      <div class="pv-list">
+        ${qs.map((q, i) => previewCardHtml(q, i)).join('')}
       </div>
     </div>
   `;
@@ -958,6 +1104,87 @@ function customRenderPreview(qs, defaultName) {
       renderCustomBank();
     } catch (e) { toast('导入失败：' + e.message); }
   };
+  box.querySelectorAll('.pv-card').forEach((card, i) => {
+    card.querySelector('[data-pv="edit"]').onclick = () => customPreviewEditQuestion(qs, i);
+    card.querySelector('[data-pv="del"]').onclick = () => {
+      qs.splice(i, 1);
+      customRenderPreview(qs, defaultName);
+    };
+  });
+}
+
+const OPT_LETTERS = 'ABCDEFGH';
+
+/** 选项拆分为 字母+文本（兼容已带 "A. " 前缀的选项） */
+function customOptionParts(o, i) {
+  const s = String(o ?? '');
+  const m = s.match(/^[（(]?([A-Ha-h])[)）]?[.、．:：]\s*(.*)$/);
+  return m ? { letter: m[1].toUpperCase(), text: m[2] } : { letter: OPT_LETTERS[i] || '', text: s };
+}
+
+/** 答案 → 字母集合（单选/多选/判断，用于选项高亮） */
+function customAnswerLetters(q) {
+  const set = new Set();
+  const a = String(q?.answer || '').trim();
+  const idx = Number(q?.answer_index ?? -1);
+  if (idx >= 0 && idx < OPT_LETTERS.length) set.add(OPT_LETTERS[idx]);
+  if (/^\[/.test(a)) {
+    try { JSON.parse(a).forEach((i) => set.add(String.fromCharCode(65 + Number(i)))); } catch {}
+  } else {
+    String(a).toUpperCase().replace(/[^A-H]/g, '').split('').forEach((c) => set.add(c));
+  }
+  return set;
+}
+
+/** 导入预览单题卡片 */
+function previewCardHtml(q, i) {
+  const opts = Array.isArray(q.options) ? q.options : [];
+  const ansText = q.answer ? customAnswerDisplay(q.answer, opts) : '';
+  const ansLetters = customAnswerLetters(q);
+  return `
+    <div class="pv-card${q.failed ? ' fail' : ''}">
+      ${q.failed ? `<div class="pv-fail-banner">${ico('alert', 13)} AI 未能完整解析此题，已按原文保留，建议先点「编辑」修正</div>` : ''}
+      <div class="pv-card-head">
+        <span class="pv-no">${i + 1}</span>
+        <span class="pv-answer${q.answer ? ' ok' : ''}">${q.answer ? '答案 ' + esc(ansText) : '无答案'}</span>
+        <span class="pv-actions">
+          <button class="mini" data-pv="edit">${ico('pen', 13)} 编辑</button>
+          <button class="mini danger" data-pv="del">${ico('trash', 13)} 删除</button>
+        </span>
+      </div>
+      <div class="pv-prompt">${esc(q.prompt || '（空题干）')}</div>
+      ${q.material ? `<details class="pv-details"><summary>材料</summary><div class="pv-fold">${esc(q.material)}</div></details>` : ''}
+      ${opts.length ? `<div class="pv-opts">${opts.map((o, oi) => {
+        const p = customOptionParts(o, oi);
+        return `<div class="pv-opt${ansLetters.has(p.letter) ? ' ok' : ''}"><span class="pv-opt-letter">${p.letter || '•'}</span><span>${esc(p.text)}</span></div>`;
+      }).join('')}</div>` : ''}
+      ${q.analysis ? `<details class="pv-details"><summary>解析</summary><div class="pv-fold">${esc(q.analysis)}</div></details>` : '<div class="pv-no-fold">无解析</div>'}
+    </div>`;
+}
+
+/** 编辑弹窗字段（题干/材料/选项/答案/解析 分区，两个编辑弹窗共用） */
+function editQuestionFieldsHtml(q, ansDisplay) {
+  return `
+    <div class="eq-section">
+      <div class="eq-section-title">题干</div>
+      <textarea id="eq-prompt" class="field-area" rows="3">${esc(q.prompt || '')}</textarea>
+    </div>
+    <div class="eq-section">
+      <div class="eq-section-title">材料 <span class="muted">（材料题才有；没有留空）</span></div>
+      <textarea id="eq-material" class="field-area" rows="2">${esc(q.material || '')}</textarea>
+    </div>
+    <div class="eq-section">
+      <div class="eq-section-title">选项 <span class="muted">（每行一个，如 A. 选项内容；无选项留空）</span></div>
+      <textarea id="eq-options" class="field-area" rows="${Math.max(2, (q.options || []).length)}">${esc((q.options || []).join('\n'))}</textarea>
+    </div>
+    <div class="eq-section">
+      <div class="eq-section-title">答案 <span class="muted">（A / AB / 正确 / 错误；留空 = 无答案不判分）</span></div>
+      <input type="text" class="field-input" id="eq-answer" value="${esc(ansDisplay)}" placeholder="如 B 或 AB">
+    </div>
+    <div class="eq-section">
+      <div class="eq-section-title">解析 <span class="muted">（没有留空）</span></div>
+      <textarea id="eq-analysis" class="field-area" rows="2">${esc(q.analysis || '')}</textarea>
+    </div>`;
 }
 
 /** 单题编辑弹窗（保存时自动重算 answer_index） */
@@ -965,19 +1192,10 @@ function customEditQuestion(q, batchName) {
   const ansDisplay = /^\[/.test(q.answer || '') ? customAnswerDisplay(q.answer, q.options) : q.answer || '';
   const sheet = customSheet(`
     <h3>编辑题目 <span class="muted">（${esc(batchName || '')}）</span></h3>
-    <label>提示（题干）</label>
-    <textarea id="eq-prompt" rows="3">${esc(q.prompt || '')}</textarea>
-    <label>材料（无则留空）</label>
-    <textarea id="eq-material" rows="2">${esc(q.material || '')}</textarea>
-    <label>选项（每行一个，如 A. 选项内容；无选项留空）</label>
-    <textarea id="eq-options" rows="${Math.max(2, (q.options || []).length)}">${esc((q.options || []).join('\n'))}</textarea>
-    <label>答案（A / AB / 正确 / 错误，留空=无答案不判分）</label>
-    <input type="text" id="eq-answer" value="${esc(ansDisplay)}" placeholder="如 B 或 AB">
-    <label>解析（无则留空）</label>
-    <textarea id="eq-analysis" rows="2">${esc(q.analysis || '')}</textarea>
+    ${editQuestionFieldsHtml(q, ansDisplay)}
     <div class="sheet-actions">
-      <button class="btn primary" id="eq-save">保存</button>
-      <button class="btn" id="eq-cancel">取消</button>
+      <button class="btn btn-primary" id="eq-save" style="flex:0 0 auto">${ico('save', 15)} 保存</button>
+      <button class="btn btn-ghost" id="eq-cancel" style="flex:0 0 auto">取消</button>
     </div>
   `, true);
   $('#eq-cancel').onclick = () => sheet.remove();
@@ -1002,13 +1220,55 @@ function customEditQuestion(q, batchName) {
   };
 }
 
+/** 导入预览中的单题编辑（保存后更新预览数据并重渲染） */
+function customPreviewEditQuestion(qs, i) {
+  const q = qs[i];
+  const ansDisplay = /^\[/.test(q.answer || '') ? customAnswerDisplay(q.answer, q.options) : q.answer || '';
+  const sheet = customSheet(`
+    <h3>编辑第 ${i + 1} 题 <span class="muted">（导入前修正）</span></h3>
+    ${editQuestionFieldsHtml(q, ansDisplay)}
+    <div class="sheet-actions">
+      <button class="btn btn-primary" id="pq-save" style="flex:0 0 auto">${ico('save', 15)} 保存</button>
+      <button class="btn btn-ghost" id="pq-cancel" style="flex:0 0 auto">取消</button>
+    </div>
+  `, true);
+  $('#pq-cancel').onclick = () => sheet.remove();
+  $('#pq-save').onclick = async () => {
+    const options = $('#eq-options').value.split('\n').map((s) => s.trim()).filter(Boolean);
+    const { normalizeAnswer } = await import('./lib/custom-parser.js');
+    const norm = normalizeAnswer($('#eq-answer').value.trim(), options);
+    qs[i] = {
+      ...q,
+      prompt: $('#eq-prompt').value.trim(),
+      material: $('#eq-material').value.trim(),
+      options: norm.options,
+      answer: norm.answer,
+      answer_index: norm.answer_index,
+      analysis: $('#eq-analysis').value.trim(),
+      failed: false,
+    };
+    sheet.remove();
+    toast('已保存');
+    customRenderPreview(qs, '');
+  };
+}
+
 function customRenameBatch(b) {
   const sheet = customSheet(`
-    <h3>批次改名</h3>
-    <input type="text" id="rn-name" value="${esc(b.name)}">
+    <h3>模块改名</h3>
+    <label>名称</label>
+    <input type="text" class="field-input" id="rn-name" value="${esc(b.name)}">
+    <label>科目 <span class="muted">（影响刷题统计与错题本归属）</span></label>
+    <select id="rn-subject" class="field-input">
+      <option value="">科目：不限（归入「自定义」）</option>
+      <option value="行测"${b.subject === '行测' ? ' selected' : ''}>行测</option>
+      <option value="职测"${b.subject === '职测' ? ' selected' : ''}>职测</option>
+      <option value="综应"${b.subject === '综应' ? ' selected' : ''}>综应</option>
+      <option value="申论"${b.subject === '申论' ? ' selected' : ''}>申论</option>
+    </select>
     <div class="sheet-actions">
-      <button class="btn primary" id="rn-ok">保存</button>
-      <button class="btn" id="rn-cancel">取消</button>
+      <button class="btn btn-primary" id="rn-ok" style="flex:0 0 auto">${ico('save', 15)} 保存</button>
+      <button class="btn btn-ghost" id="rn-cancel" style="flex:0 0 auto">取消</button>
     </div>
   `);
   $('#rn-cancel').onclick = () => sheet.remove();
@@ -1016,21 +1276,56 @@ function customRenameBatch(b) {
     const name = $('#rn-name').value.trim();
     if (!name) { toast('名称不能为空'); return; }
     try {
-      await api('/api/custom/batch?id=' + b.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: b.id, name }) });
+      await api('/api/custom/batch?id=' + b.id, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ id: b.id, name, subject: $('#rn-subject').value }) });
       sheet.remove();
-      toast('已改名');
+      toast('已保存');
       renderCustomBank(true);
-    } catch (e) { toast('改名失败：' + e.message); }
+    } catch (e) { toast('保存失败：' + e.message); }
   };
+}
+
+/** 题目详情弹窗：完整展示题干/材料/选项/答案/解析 + 编辑/删除入口 */
+function customQuestionDetail(q, batchName) {
+  const opts = Array.isArray(q.options) ? q.options : [];
+  const ansText = q.answer ? customAnswerDisplay(q.answer, opts) : '';
+  const ansLetters = customAnswerLetters(q);
+  const sheet = customSheet(`
+    <h3>题目详情 <span class="muted">（${esc(batchName || '')}）</span></h3>
+    <div class="qd-block">
+      <div class="qd-label">题干</div>
+      <div class="qd-content">${esc(q.prompt || '（空题干）')}</div>
+    </div>
+    ${q.material ? `<div class="qd-block"><div class="qd-label">材料</div><div class="qd-content">${esc(q.material)}</div></div>` : ''}
+    ${opts.length ? `<div class="qd-block"><div class="qd-label">选项</div><div class="qd-opts">${opts.map((o, oi) => {
+      const p = customOptionParts(o, oi);
+      return `<div class="qd-opt${ansLetters.has(p.letter) ? ' ok' : ''}"><span class="qd-opt-letter">${p.letter || '•'}</span><span>${esc(p.text)}</span></div>`;
+    }).join('')}</div></div>` : ''}
+    <div class="qd-block">
+      <div class="qd-label">答案</div>
+      <div class="qd-content">${q.answer ? `<b>${esc(ansText)}</b>` : '<span class="muted">无标准答案（不判分）</span>'}</div>
+    </div>
+    <div class="qd-block">
+      <div class="qd-label">解析</div>
+      <div class="qd-content">${q.analysis ? esc(q.analysis) : '<span class="muted">无解析</span>'}</div>
+    </div>
+    <div class="sheet-actions">
+      <button class="btn btn-primary" id="qd-edit" style="flex:0 0 auto">${ico('pen', 15)} 编辑</button>
+      <button class="btn btn-danger" id="qd-del" style="flex:0 0 auto">${ico('trash', 15)} 删除</button>
+      <button class="btn btn-ghost" id="qd-close" style="flex:0 0 auto">关闭</button>
+    </div>
+  `, true);
+  $('#qd-close').onclick = () => sheet.remove();
+  $('#qd-edit').onclick = () => { sheet.remove(); customEditQuestion(q, batchName); };
+  $('#qd-del').onclick = () => { sheet.remove(); customDeleteQuestion(q); };
 }
 
 function customDeleteBatch(b) {
   const sheet = customSheet(`
-    <h3>删除批次「${esc(b.name)}」？</h3>
+    <h3><span class="danger-ico">${ico('xCircle', 22)}</span>删除批次「${esc(b.name)}」？</h3>
     <p class="muted">将同时删除该批次的 ${b.count} 道题（做题记录保留）。此操作不可恢复。</p>
     <div class="sheet-actions">
-      <button class="btn danger" id="del-ok">确认删除</button>
-      <button class="btn" id="del-cancel">取消</button>
+      <button class="btn btn-danger" id="del-ok" style="flex:0 0 auto">${ico('trash', 15)} 确认删除</button>
+      <button class="btn btn-ghost" id="del-cancel" style="flex:0 0 auto">取消</button>
     </div>
   `);
   $('#del-cancel').onclick = () => sheet.remove();
@@ -1046,11 +1341,11 @@ function customDeleteBatch(b) {
 
 function customDeleteQuestion(q) {
   const sheet = customSheet(`
-    <h3>删除这道题？</h3>
+    <h3><span class="danger-ico">${ico('xCircle', 22)}</span>删除这道题？</h3>
     <p class="muted">${esc((q.prompt || '').slice(0, 50))}</p>
     <div class="sheet-actions">
-      <button class="btn danger" id="dq-ok">确认删除</button>
-      <button class="btn" id="dq-cancel">取消</button>
+      <button class="btn btn-danger" id="dq-ok" style="flex:0 0 auto">${ico('trash', 15)} 确认删除</button>
+      <button class="btn btn-ghost" id="dq-cancel" style="flex:0 0 auto">取消</button>
     </div>
   `);
   $('#dq-cancel').onclick = () => sheet.remove();
@@ -1093,10 +1388,17 @@ async function renderSubject(subject, skipNav) {
     `;
 
     // 专项练习（粉笔 1:1 三级树：大模块 → 子模块 → 知识点）
-    const chapCard = el('div', 'card', `<h3>专项练习</h3><div class="card-sub">与粉笔同步的知识点目录，逐级展开开始刷题</div>`);
+    // 自定义刷题入口：仅行测/职测（用户 2026-08 要求，专项练习标题行最右侧）
+    const isCustomOk = subject === '公务员·行测' || subject === '事业编·职测';
+    const chapCard = el('div', 'card', `
+      <h3 class="card-title-row">专项练习
+        ${isCustomOk ? `<button class="btn btn-primary btn-sm" id="btn-custom-practice">${ico('sliders', 14)} 自定义刷题</button>` : ''}
+      </h3>
+      <div class="card-sub">${isCustomOk ? customCfgHint() : '与粉笔同步的知识点目录，逐级展开开始刷题'}</div>`);
     const chapList = el('div');
     chapCard.appendChild(chapList);
     view.appendChild(chapCard);
+    if (isCustomOk) $('#btn-custom-practice').onclick = () => openCustomPractice(subject);
     if (!chapters.length) {
       chapList.innerHTML = '<div class="empty">该题库暂无模块分类</div>';
     } else {
@@ -1324,17 +1626,17 @@ async function renderPractice(subject, chapter, paperId, mock, skipNav, group, s
     let chParam = '';
     if (group) chParam = `&group=${encodeURIComponent(group)}&sub=${encodeURIComponent(sub || '全部')}`;
     else chParam = Array.isArray(chapter) ? `&chapters=${encodeURIComponent(chapter.join(','))}` : (chapter ? `&chapter=${encodeURIComponent(chapter)}` : '');
-    const url = `/api/practice?subject=${encodeURIComponent(subject)}${chParam}${mock != null ? `&mock=${mock}` : ''}&n=${practiceCount(subject)}`;
+    const url = `/api/practice?subject=${encodeURIComponent(subject)}${chParam}${mock != null ? `&mock=${mock}` : ''}&n=${practiceCount(subject)}&year=${store.customConfig.year}&difficulty=${store.customConfig.difficulty}`;
     const questions = await api(url);
     if (!questions.length) { view.innerHTML = '<div class="empty">暂无题目</div>'; return; }
-    enterQuiz(questions, subject, (chapter || group) ? 'chapter' : 'random', Array.isArray(chapter) ? chapter[0] : chapter, mock);
+    enterQuiz(questions, subject, (chapter || group) ? 'chapter' : 'random', Array.isArray(chapter) ? chapter[0] : chapter, mock, null, store.customConfig.mode === 'recite');
   } catch (e) {
     view.innerHTML = `<div class="empty">加载失败：${e.message}</div>`;
   }
 }
 
-/** 进入刷题状态（随机/章节/组卷共用）：写入 store、开计时、渲染首题 */
-function enterQuiz(questions, subject, mode, chapter, mock, limitSec) {
+/** 进入刷题状态（随机/章节/组卷/自定义共用）：写入 store、开计时、渲染首题；backMode=背题模式 */
+function enterQuiz(questions, subject, mode, chapter, mock, limitSec, backMode) {
   store.state.questions = questions;
   store.state.idx = 0;
   store.state.results = [];
@@ -1343,6 +1645,7 @@ function enterQuiz(questions, subject, mode, chapter, mock, limitSec) {
   store.state.subject = subject;
   store.state.chapter = chapter ?? null;
   store.state.mock = mock ?? null;
+  store.state.backMode = !!backMode;
   stopTimer();
   startTimer(limitSec); // 组卷（mode='quiz'）传 durationMinutes×60 → 倒计时；其余正计时
   renderQuestion();
@@ -1459,6 +1762,80 @@ function openPaperConfig() {
   // 生成
   $('#btn-gen-paper').onclick = () => generatePaper(overlay);
 }
+
+// ============ 自定义刷题（仅行测/职测，专项练习标题行入口）============
+/** 打开自定义刷题筛选 sheet：出题模式（做题/背题）+ 年份（不限/近3/近5/近10）+ 难度；保存后专项练习模块刷题按此出题 */
+function openCustomPractice(subject) {
+  const overlay = el('div', 'sheet-overlay');
+  overlay.innerHTML = `
+    <div class="sheet">
+      <div class="sheet-head"><b>${ico('sliders', 16)} 自定义刷题</b><button class="sheet-close">✕</button></div>
+      <div class="cfg-group">出题模式</div>
+      <div class="cfg-row">
+        <div class="chip-row" id="cp-mode">
+          <span class="chip" data-mode="practice">做题模式</span>
+          <span class="chip" data-mode="recite">背题模式</span>
+        </div>
+      </div>
+      <div class="cfg-group">出题年份</div>
+      <div class="cfg-row">
+        <div class="chip-row" id="cp-year">
+          <span class="chip" data-year="all">不限</span>
+          <span class="chip" data-year="3">近3年</span>
+          <span class="chip" data-year="5">近5年</span>
+          <span class="chip" data-year="10">近10年</span>
+        </div>
+      </div>
+      <div class="cfg-group">出题难度</div>
+      <div class="cfg-row">
+        <div class="chip-row" id="cp-diff">
+          ${XINGCE_DIFFS.map((d) => `<span class="chip" data-diff="${d.key}" title="${d.tip}">${d.label}</span>`).join('')}
+        </div>
+      </div>
+      <div class="cfg-tip">${ico('info', 13)} 保存后，专项练习下方各模块刷题将按以上筛选出题；页面题量统计不变</div>
+      <button class="btn btn-primary btn-block" id="btn-cp-save" style="margin-top:16px">${ico('check', 15)} 确定</button>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+  overlay.querySelector('.sheet-close').onclick = () => overlay.remove();
+  overlay.addEventListener('click', (e) => { if (e.target === overlay) overlay.remove(); });
+  // chips 单选（回显当前已保存的筛选）
+  const bindChips = (id, key) => overlay.querySelectorAll(`#${id} .chip`).forEach((chip) => {
+    chip.classList.toggle('on', chip.dataset[key] === store.customConfig[key]);
+    chip.onclick = () => overlay.querySelectorAll(`#${id} .chip`).forEach((c) => c.classList.toggle('on', c === chip));
+  });
+  bindChips('cp-mode', 'mode'); bindChips('cp-year', 'year'); bindChips('cp-diff', 'diff');
+  // 确定：保存筛选 → 关闭 → 回到专项练习页（刷新筛选提示）
+  $('#btn-cp-save').onclick = () => {
+    store.customConfig = {
+      mode: overlay.querySelector('#cp-mode .chip.on')?.dataset.mode || 'practice',
+      year: overlay.querySelector('#cp-year .chip.on')?.dataset.year || '10',
+      difficulty: overlay.querySelector('#cp-diff .chip.on')?.dataset.diff || 'random',
+    };
+    localStorage.setItem('custom_practice_cfg', JSON.stringify(store.customConfig));
+    overlay.remove();
+    toast('已应用：' + fmtCustomCfg(store.customConfig));
+    if (store.state.view === 'category' && store.state.subject === subject) renderSubject(subject, true);
+  };
+}
+
+/** 把筛选配置格式化成中文提示 */
+function fmtCustomCfg(c) {
+  const y = { all: '不限年份', 3: '近3年', 5: '近5年', 10: '近10年' }[c.year] || c.year;
+  const d = (XINGCE_DIFFS.find((x) => x.key === c.difficulty) || {}).label || '随机难度';
+  const m = c.mode === 'recite' ? '背题模式' : '做题模式';
+  return `${y} · ${d} · ${m}`;
+}
+
+/** 专项练习卡片副标题：显示当前自定义刷题筛选状态（默认配置时给引导文案） */
+function customCfgHint() {
+  const c = store.customConfig;
+  const isDefault = c.mode === 'practice' && c.year === '10' && c.difficulty === 'random';
+  return isDefault
+    ? '可自定义刷题筛选（年份/难度/背题模式），点下方模块刷题生效'
+    : `当前筛选：${fmtCustomCfg(c)}（点「自定义刷题」修改）`;
+}
+
 
 /** 调后端组卷接口；成功 → 预览页；失败/降级 → toast 提示 */
 async function generatePaper(overlay) {
@@ -1660,7 +2037,7 @@ function renderQuestion() {
       <span class="timer-ico">${s.timing?.limit ? ico('hourglass', 15) : ico('clock', 15)}</span>
       <span id="timer-text">${s.timing?.limit ? fmtTime(s.timing.remaining) : fmtTime(s.timing?.elapsed ?? 0)}</span>
       <button class="btn btn-ghost btn-sm" id="btn-pause" title="${s.timing?.running === false ? '继续' : '暂停'}">${s.timing?.running === false ? ico('play', 14) : ico('pause', 14)}</button>
-      <span class="timer-tip">${s.timing?.limit ? '倒计时结束自动交卷' : '交卷后查看解析与成绩'}</span>
+      <span class="timer-tip">${s.backMode ? '背题模式：点选即看答案，不自动跳题' : (s.timing?.limit ? '倒计时结束自动交卷' : '交卷后查看解析与成绩')}</span>
     `));
     $('#btn-pause').onclick = pauseToggle;
   }
@@ -1899,6 +2276,7 @@ function renderQuestion() {
     if ((s.answers[s.idx]?.excluded || []).includes(i)) b.classList.add('excluded');
     b.onclick = () => {
       if (b._lpFired) { b._lpFired = false; return; } // 长按触发的随后 click 吞掉
+      if (b.classList.contains('locked')) return; // 背题模式已判分：选项锁定
       if (paused()) { toast('已暂停，先点继续再作答'); return; }
       if (b.classList.contains('excluded')) { toast(`选项 ${LETTERS[i] || i + 1} 已被排除，长按可恢复`); return; }
       if (isMulti) {
@@ -1920,6 +2298,7 @@ function renderQuestion() {
     const lpClear = () => { if (lpTimer) { clearTimeout(lpTimer); lpTimer = null; } };
     b.addEventListener('pointerdown', (e) => {
       if (paused()) return;
+      if (b.classList.contains('locked')) return; // 背题模式已判分：长按排除也失效
       lpStart = { x: e.clientX, y: e.clientY };
       lpTimer = setTimeout(() => {
         lpTimer = null;
@@ -3132,9 +3511,12 @@ async function renderAiSettings() {
   [...document.querySelectorAll('#topbar-right > *:not(#btn-theme)')].forEach(n => n.remove());
   const view = $('#view');
   view.innerHTML = '<div class="spinner"></div>';
-  let agents;
+  let agents, skills = [], skillsErr = false;
   try {
-    agents = await api('/api/ai/agents');
+    [agents, skills] = await Promise.all([
+      api('/api/ai/agents'),
+      api('/api/skills').catch((e) => { skillsErr = true; return []; }),
+    ]);
   } catch (e) {
     view.innerHTML = `<div class="empty">加载失败：${e.message}</div>`;
     return;
@@ -3153,6 +3535,67 @@ async function renderAiSettings() {
     toast(r.cleared > 0 ? `已清除 ${r.cleared} 条解析缓存` : '缓存本来就是空的');
   };
 
+  // ---- 技能库（用户导入技能包，可挂到行测解析 / 申论批改的 Skill 字段） ----
+  const skillCard = el('div', 'card', `
+    <h3>${ico('package', 17)} 技能库（${skills.length}）</h3>
+    <div class="li-sub">导入自定义技能包（SKILL.md / zip / URL），在「行测解析」「申论批改」的 Skill 字段填入技能名即可自动注入。<b>同名导入会覆盖旧版本</b>。</div>
+    <div id="skill-list" style="margin-top:6px">
+      ${skills.map((s) => `
+        <div class="skill-item">
+          <div style="flex:1;min-width:0">
+            <b>${esc(s.name)}</b>
+            ${s.inUse.length ? `<span class="badge" style="margin-left:6px">被 ${esc(s.inUse.join('、'))} 使用</span>` : ''}
+          </div>
+          <button class="btn btn-ghost" style="flex:0 0 auto;padding:6px 10px" data-skill-del="${esc(s.name)}">${ico('trash', 13)} 删除</button>
+        </div>`).join('') || '<div class="empty" style="padding:8px 0">还没有导入技能</div>'}
+    </div>
+    <div style="display:flex;gap:8px;margin-top:10px">
+      <button class="btn" data-skill-import>${ico('upload', 14)} 导入技能</button>
+      <button class="btn btn-ghost" data-skill-builtin>${ico('package', 14)} 导入内置技能</button>
+    </div>
+  `);
+  view.appendChild(skillCard);
+  skillCard.querySelector('[data-skill-import]').onclick = () => renderSkillImport();
+  // 导入打包内置的默认技能（gongkao-huasheng13 / shenlun-master）进技能库：
+  // 导入后双端统一走 user_skills 注入（Web 端内置目录缺失时原本只是纯文本回退），下拉不再显示「不在技能库」
+  skillCard.querySelector('[data-skill-builtin]').onclick = async () => {
+    const bundles = ['skill-gongkao-huasheng13.json', 'skill-shenlun-master.json'];
+    const imported = [];
+    for (const f of bundles) {
+      try {
+        const r = await fetch('app-assets/' + f, { cache: 'no-cache' });
+        if (!r.ok) throw new Error('HTTP ' + r.status);
+        const b = await r.json();
+        const paths = [...String(b.text || '').matchAll(/----- ([^\n]+) -----/g)].map((m) => ({ path: m[1], size: 0 }));
+        const files = [{ path: 'SKILL.md', size: 0 }, ...paths];
+        const res = await api('/api/skills', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: b.name, description: '', text: b.text, files }),
+        });
+        if (res.error) throw new Error(res.error);
+        imported.push(`${b.name}${res.replaced ? '（覆盖）' : ''}`);
+      } catch (e) {
+        toast(`导入内置技能 ${f} 失败：${e.message}`);
+      }
+    }
+    if (imported.length) {
+      toast('已导入内置技能：' + imported.join('、'));
+      renderAiSettings();
+    }
+  };
+  skillCard.querySelectorAll('[data-skill-del]').forEach((btn) => {
+    btn.onclick = async () => {
+      const name = btn.dataset.skillDel;
+      if (!confirm(`删除技能「${name}」？\n若已有智能体引用它，其 Skill 字段会保留但按纯文本处理。`)) return;
+      try {
+        const r = await api('/api/skills/' + encodeURIComponent(name), { method: 'DELETE' });
+        toast(r.ok ? `已删除「${name}」` : '删除失败');
+      } catch (e) { toast('删除失败：' + e.message); }
+      renderAiSettings();
+    };
+  });
+
   for (const a of agents) {
     const card = el('div', 'card');
     card.innerHTML = `
@@ -3163,8 +3606,19 @@ async function renderAiSettings() {
         </div>
         <button class="btn btn-ghost" style="flex:0 0 auto;padding:8px 14px" data-ai-toggle>${a.enabled ? '停用' : '启用'}</button>
       </div>
+      ${[1, 2].includes(a.id) ? `
+      <label class="field-label">Base URL（从常用网关选择）</label>
+      <select class="field" data-f="base_url" data-base-pick>
+        ${!String(a.base_url || '').trim() ? '<option value="">请选择网关…</option>' : ''}
+        ${AI_GATEWAYS.some((g) => g.url === String(a.base_url || '').trim()) ? '' : (String(a.base_url || '').trim() ? `<option value="${esc(a.base_url)}" selected>当前：${esc(a.base_url)}</option>` : '')}
+        ${AI_GATEWAYS.map((g) => `<option value="${esc(g.url)}" ${String(a.base_url || '').trim() === g.url ? 'selected' : ''}>${esc(g.label)}：${esc(g.url)}</option>`).join('')}
+        <option value="__custom__">自定义…</option>
+      </select>
+      <input class="field" data-f="base_url-custom" style="display:none;margin-top:8px" placeholder="https://api.deepseek.com/v1" value="${esc(a.base_url)}">
+      ` : `
       <label class="field-label">Base URL（OpenAI 兼容）</label>
       <input class="field" data-f="base_url" value="${esc(a.base_url)}" placeholder="https://api.deepseek.com/v1">
+      `}
       <label class="field-label">API Key</label>
       <input class="field" data-f="api_key" type="password" value="${esc(a.api_key)}" placeholder="${a.api_key_masked || '未配置'}">
       <label class="field-label">模型</label>
@@ -3181,9 +3635,21 @@ async function renderAiSettings() {
           <input class="field" data-f="max_tokens" type="number" step="100" min="100" value="${a.max_tokens ?? 1500}">
         </div>
       </div>
+      ${a.skill_loaded ? `<div class="li-sub" style="color:#2e7d32">✓ 已自动加载 skill：<b>${esc(a.skill_loaded.name)}</b>（${a.skill_loaded.files} 个文件：SKILL.md + references${a.skill_loaded.source === 'user' ? '，用户导入' : ''}）</div>` : ''}
+      ${[1, 2].includes(a.id) && !skillsErr ? `
+      <label class="field-label">Skill（从技能库选择）</label>
+      <select class="field" data-f="skill" data-skill-pick>
+        ${!String(a.skill || '').trim() ? '<option value="">请选择技能…</option>' : ''}
+        ${skills.some((s) => s.name === String(a.skill || '').trim()) ? '' : (String(a.skill || '').trim() ? `<option value="${esc(a.skill)}" selected>当前：${esc(a.skill)}（不在技能库）</option>` : '')}
+        ${skills.map((s) => `<option value="${esc(s.name)}" ${String(a.skill || '').trim() === s.name ? 'selected' : ''}>${esc(s.name)}${s.inUse.length ? '（使用中）' : ''}</option>`).join('')}
+        <option value="__custom__">自定义文本…</option>
+      </select>
+      <textarea class="field" data-f="skill-text" rows="2" style="display:none;margin-top:8px" placeholder="直接写附加能力说明（不加载技能包）">${esc(a.skill || '')}</textarea>
+      ` : `
+      ${skillsErr && [1, 2].includes(a.id) ? '<div class="li-sub" style="color:#c62828">技能库加载失败，下拉不可用，请手动填写：</div>' : ''}
       <label class="field-label">Skill（能力说明）</label>
-      ${a.skill_loaded ? `<div class="li-sub" style="color:#2e7d32">✓ 已自动加载 skill：<b>${esc(a.skill_loaded.name)}</b>（${a.skill_loaded.files} 个文件：SKILL.md + references）</div>` : ''}
       <textarea class="field" data-f="skill" rows="2" placeholder="填 skill 名称自动加载本地文件夹（如 gongkao-huasheng13）；或直接写附加能力说明">${esc(a.skill || '')}</textarea>
+      `}
       <label class="field-label">System Prompt（角色设定）</label>
       <textarea class="field" data-f="system_prompt" rows="8">${esc(a.system_prompt || '')}</textarea>
       <div class="action-row" style="margin-top:10px">
@@ -3194,10 +3660,27 @@ async function renderAiSettings() {
       <div class="ai-test-result" style="display:none"></div>
     `;
     const agentId = a.id;
-    card.querySelector('[data-ai-toggle]').onclick = () => {
-      saveAgent(agentId, { enabled: a.enabled ? 0 : 1 }).then(() => renderAiSettings());
-    };
-    card.querySelector('[data-ai-save]').onclick = async () => {
+    const skillPick = card.querySelector('[data-skill-pick]');
+    const skillTextEl = card.querySelector('[data-f="skill-text"]');
+    if (skillPick && skillTextEl) {
+      // 下拉为主：选「自定义文本…」才显示文本框，其余情况隐藏
+      const syncSkillText = () => { skillTextEl.style.display = skillPick.value === '__custom__' ? 'block' : 'none'; };
+      skillPick.onchange = syncSkillText;
+      syncSkillText();
+    }
+    const basePick = card.querySelector('[data-base-pick]');
+    const baseCustomEl = card.querySelector('[data-f="base_url-custom"]');
+    if (basePick && baseCustomEl) {
+      // 常用网关下拉：选「自定义…」才显示手动输入框；切换网关提示核对 API Key
+      const syncBaseCustom = () => { baseCustomEl.style.display = basePick.value === '__custom__' ? 'block' : 'none'; };
+      basePick.onchange = () => {
+        syncBaseCustom();
+        if (basePick.value && basePick.value !== '__custom__') toast('已选择网关，请确认下方 API Key 与所选网关匹配（或留空）后再保存');
+      };
+      syncBaseCustom();
+    }
+    // 收集字段：下拉模式选了「自定义…」时，用对应自定义输入框的值作为最终值
+    const collectFields = () => {
       const fields = {};
       card.querySelectorAll('[data-f]').forEach((input) => {
         const key = input.dataset.f;
@@ -3206,20 +3689,24 @@ async function renderAiSettings() {
         if (key === 'max_tokens') val = Number(val);
         fields[key] = val;
       });
-      await saveAgent(agentId, fields);
+      if (fields.skill === '__custom__') fields.skill = fields['skill-text'] || '';
+      delete fields['skill-text'];
+      if (fields.base_url === '__custom__') fields.base_url = fields['base_url-custom'] || '';
+      delete fields['base_url-custom'];
+      return fields;
+    };
+    card.querySelector('[data-ai-toggle]').onclick = () => {
+      saveAgent(agentId, { enabled: a.enabled ? 0 : 1 }).then(() => renderAiSettings());
+    };
+    card.querySelector('[data-ai-save]').onclick = async () => {
+      const fields = collectFields();
+      const r = await saveAgent(agentId, fields);
       toast(r && r.promptChanged ? '已保存：prompt/skill 有变化，解析缓存已清空，重新解析将使用新配置' : '已保存（立即生效）');
       renderAiSettings();
     };
     card.querySelector('[data-ai-test]').onclick = async () => {
       const box = card.querySelector('.ai-test-result');
-      const fields = {};
-      card.querySelectorAll('[data-f]').forEach((input) => {
-        const key = input.dataset.f;
-        let val = input.value;
-        if (key === 'temperature') val = Number(val);
-        if (key === 'max_tokens') val = Number(val);
-        fields[key] = val;
-      });
+      const fields = collectFields();
       // 先保存当前填写内容，再测试
       await saveAgent(agentId, fields);
       box.style.display = 'block';
@@ -3241,7 +3728,11 @@ async function renderAiSettings() {
     };
     card.querySelector('[data-ai-models]').onclick = async () => {
       const box = card.querySelector('.ai-models-box');
-      const baseUrl = card.querySelector('[data-f="base_url"]').value.trim();
+      // Base URL：下拉模式（id 1/2）下若选了「自定义…」则读手动输入框
+      const baseEl = card.querySelector('[data-f="base_url"]');
+      const baseUrl = ((baseEl && baseEl.value === '__custom__')
+        ? (card.querySelector('[data-f="base_url-custom"]') || { value: '' }).value
+        : (baseEl ? baseEl.value : '')).trim();
       const apiKey = card.querySelector('[data-f="api_key"]').value.trim();
       const modelInput = card.querySelector('[data-f="model"]');
       box.style.display = 'block';
@@ -3277,6 +3768,13 @@ async function renderAiSettings() {
   }
 }
 
+// 常用 AI 网关（行测/申论 Base URL 下拉快捷切换；增删这里即可）
+const AI_GATEWAYS = [
+  { label: 'open code', url: 'https://opencode.ai/zen/v1' },
+  { label: '商汤 SenseNova', url: 'https://token.sensenova.cn/v1' },
+  { label: '智谱 BigModel', url: 'https://open.bigmodel.cn/api/paas/v4' },
+];
+
 /** 从 OpenAI 兼容网关拉取模型列表（GET {base}/models） */
 async function fetchModelList(baseUrl, apiKey) {
   let base = String(baseUrl || '').trim().replace(/\/+$/, '');
@@ -3291,6 +3789,20 @@ async function fetchModelList(baseUrl, apiKey) {
       const r = await nativeHttp.request({ url: u, method: 'GET', headers, connectTimeout: 15000, readTimeout: 30000 });
       return { ok: r.status >= 200 && r.status < 300, status: r.status, json: async () => r.data, text: async () => (typeof r.data === 'string' ? r.data : JSON.stringify(r.data ?? '')) };
     }
+    // Web 模式：优先走服务端代理（浏览器直连第三方网关会被 CORS 拦截）。
+    // 传原始 base 而非候选 URL——代理内部会尝试 {base}/models 与 {base}/v1/models
+    const proxied = await api('/api/ai/models-proxy', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl: base, apiKey }),
+    }).catch(() => null);
+    if (proxied && !proxied.error) {
+      return { ok: true, status: 200, json: async () => proxied, text: async () => '' };
+    }
+    if (proxied && proxied.error) {
+      return { ok: false, status: proxied.status || 400, json: async () => ({}), text: async () => proxied.error };
+    }
+    // 无服务端（?local=1 浏览器联调）→ 直连兜底
     return fetch(u, { headers });
   };
   const cands = [`${base}/models`];
@@ -3321,6 +3833,211 @@ async function fetchModelList(baseUrl, apiKey) {
     }
   }
   return { error: lastErr || '获取模型列表失败' };
+}
+
+// ---------- 技能库导入（AI 设置页 → 导入技能；三段式：文件/粘贴/URL → 预览 → 确认） ----------
+
+async function renderSkillImport() {
+  setView('skill-import');
+  $('#app-title').textContent = '导入技能';
+  store.navStack.push({ name: 'skill-import' });
+  const view = $('#view');
+  const existing = await api('/api/skills').catch(() => []);
+  const existingNames = new Set((existing || []).map((s) => s.name));
+  view.innerHTML = `
+    <div class="card">
+      <div class="import-head">
+        <span class="import-ico tint-blue">${ico('package', 22)}</span>
+        <div>
+          <h3>选择技能包文件</h3>
+          <p class="muted">支持 SKILL.md（含 YAML 头 name/description）或 zip 压缩包（SKILL.md + references/ 子文件，Claude/OpenClaw 风格技能包）。</p>
+        </div>
+      </div>
+      <label class="import-dropzone" id="skill-drop" for="skill-file">
+        <b>${ico('upload', 26)} 点击选择或拖拽文件到此处</b>
+        <span>.md / .zip</span>
+      </label>
+      <input type="file" id="skill-file" class="import-file-input" accept=".md,.markdown,.zip,.txt">
+      <div id="skill-progress" class="import-progress"></div>
+    </div>
+    <div class="card" style="margin-top:12px">
+      <div class="import-head">
+        <span class="import-ico tint-violet">${ico('clipboard', 22)}</span>
+        <div>
+          <h3>或粘贴 / 填 URL / 填安装指令</h3>
+          <p class="muted">粘贴 SKILL.md 全文，或填技能包直链（zip 或 .md），或填 RedSkill 安装指令（如「安装 shenlun-review-pro 技能」）。App 会自动识别内容类型。</p>
+        </div>
+      </div>
+      <textarea id="skill-paste" class="field-area" rows="4" placeholder="支持三种输入：&#10;1. SKILL.md 全文（---name: ...---）&#10;2. 技能包 URL（https://...zip 或 .md）&#10;3. 安装指令：安装 xxx 技能 / install xxx"></textarea>
+      <div class="import-actions">
+        <button class="btn btn-primary" id="skill-paste-btn" style="flex:0 0 auto">${ico('zap', 15)} 自动识别并导入</button>
+      </div>
+    </div>
+    <div id="skill-preview"></div>
+  `;
+
+  let SI = null;
+  const getSI = async () => (SI ||= await import('./lib/skill-importer.js'));
+
+  const skillProgress = (msg) => {
+    const p = $('#skill-progress');
+    if (p) p.innerHTML = msg ? `<div class="spinner"></div><div class="muted">${msg}</div>` : '';
+  };
+
+  const showSkillPreview = async (parsed, sourceName) => {
+    const box = $('#skill-preview');
+    const P = await getSI();
+    const v = P.validateSkill(parsed);
+    const conflict = existingNames.has(parsed.name);
+    box.innerHTML = `
+      <div class="card" style="margin-top:12px">
+        <div class="import-head">
+          <span class="import-ico ${conflict ? 'tint-red' : 'tint-green'}">${ico(conflict ? 'alert' : 'check', 20)}</span>
+          <div>
+            <h3>技能预览（来自：${esc(sourceName)}）</h3>
+            <p class="muted">${conflict ? '<b style="color:#c62828">技能库中已有同名技能「' + esc(parsed.name) + '」，确认导入将覆盖旧版本。</b>' : '新技能，可直接导入。'}</p>
+          </div>
+        </div>
+        <label class="field-label">技能名（引用时在智能体的 Skill 字段填这个名字）</label>
+        <input class="field" id="skill-name" value="${esc(parsed.name)}" ${v.ok ? '' : 'disabled'}>
+        <label class="field-label">描述（可选）</label>
+        <input class="field" id="skill-desc" value="${esc(parsed.description || '')}" placeholder="技能用途说明">
+        <label class="field-label">包含文件（${(parsed.files || []).length} 个）</label>
+        <div class="muted" style="font-size:12px;word-break:break-all">${esc((parsed.files || []).map((f) => f.path).join('、') || '仅 SKILL.md 正文')}</div>
+        <div style="margin-top:10px">
+          <button class="btn btn-primary" id="skill-confirm" ${v.ok ? '' : 'disabled'}>${ico('save', 15)} 确认导入</button>
+          <button class="btn btn-ghost" id="skill-cancel">取消</button>
+        </div>
+      </div>`;
+    $('#skill-cancel').onclick = () => { box.innerHTML = ''; };
+    $('#skill-confirm').onclick = async () => {
+      const finalName = $('#skill-name').value.trim();
+      const finalDesc = $('#skill-desc').value.trim();
+      const finalText = finalName === parsed.name ? parsed.text : P.composeSkillText(finalName, parsed.body || '', parsed.refs || []);
+      const check = P.validateSkill({ name: finalName, text: finalText });
+      if (!check.ok) { toast(check.error); return; }
+      try {
+        const r = await api('/api/skills', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: finalName, description: finalDesc, text: finalText, files: parsed.files || [] }),
+        });
+        if (r.error) { toast(r.error); return; }
+        toast(`已导入技能「${r.name}」${r.replaced ? '（覆盖旧版本）' : ''}${r.referenced ? '，被引用智能体已生效' : ''}`);
+        renderAiSettings();
+      } catch (e) { toast('导入失败：' + e.message); }
+    };
+  };
+
+  const handleParsed = async (parsed, sourceName) => {
+    skillProgress('');
+    if (!parsed || parsed.error) { toast(parsed && parsed.error ? parsed.error : '解析失败'); return; }
+    await showSkillPreview(parsed, sourceName);
+  };
+
+  // 文件
+  const parseFile = async (file) => {
+    const ext = (file.name.split('.').pop() || '').toLowerCase();
+    if (ext === 'zip') {
+      const P = await import('./lib/skill-importer.js');
+      const buf = new Uint8Array(await file.arrayBuffer());
+      return P.parseSkillZip(buf);
+    }
+    const text = await file.text();
+    const P = await import('./lib/skill-importer.js');
+    return P.parseSkillText(text, file.name.replace(/\.(md|markdown|txt)$/i, ''));
+  };
+  $('#skill-file').onchange = async () => {
+    const files = [...$('#skill-file').files];
+    if (!files.length) return;
+    for (let i = 0; i < files.length; i++) {
+      skillProgress(`解析 ${files[i].name}（${i + 1}/${files.length}）…`);
+      try {
+        handleParsed(await parseFile(files[i]), files[i].name);
+      } catch (e) {
+        skillProgress('');
+        toast('解析失败：' + e.message);
+      }
+    }
+  };
+  const drop = $('#skill-drop');
+  if (drop) {
+    ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.add('drag'); }));
+    ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => { e.preventDefault(); drop.classList.remove('drag'); }));
+    drop.addEventListener('drop', (e) => {
+      const files = e.dataTransfer && e.dataTransfer.files;
+      if (!files || !files.length) return;
+      const input = $('#skill-file');
+      try { input.files = files; } catch (_) { return; }
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+    });
+  }
+
+  // 粘贴 / URL / 安装指令 — 自动识别
+  $('#skill-paste-btn').onclick = async () => {
+    const raw = $('#skill-paste').value.trim();
+    if (!raw) { toast('请先粘贴内容'); return; }
+    const P = await getSI();
+
+    // 1) 安装指令识别（RedSkill）：支持长段落（含 install.md / RedSkill 字样）与无空格写法（安装xxx技能）
+    const hasRedSkillHint = /install\.md|redskill\.xiaohongshu\.net|RedSkill/i.test(raw);
+    const idMatches = raw.match(/(?:安装|install)\s*([A-Za-z0-9][A-Za-z0-9._-]*)/gi) || [];
+    const identifiers = idMatches
+      .map((m) => (m.match(/(?:安装|install)\s*([A-Za-z0-9][A-Za-z0-9._-]*)/i) || [])[1])
+      .filter((id) => !/^(redskill|skill|skills|cli|store)$/i.test(id));
+    // SKILL.md frontmatter（--- 开头）优先按全文处理，避免误判
+    if (!/^\uFEFF?---\s*\r?\n/i.test(raw) && identifiers.length && (hasRedSkillHint || raw.length < 300)) {
+      const identifier = identifiers[identifiers.length - 1]; // 取最后提到的技能
+      skillProgress(`从 RedSkill 拉取「${identifier}」…`);
+      try {
+        const parsed = await fetchSkillFromUrl(`https://edith.xiaohongshu.com/api/sns/v1/creator/red_skill/get_skill_bundle?identifier=${encodeURIComponent(identifier)}`, P);
+        handleParsed(parsed, `RedSkill: ${identifier}`);
+      } catch (e) { skillProgress(''); toast('拉取失败：' + e.message); }
+      return;
+    }
+
+    // 2) URL：任意直链（zip / SKILL.md / RedSkill API 等），按内容自动判定类型
+    if (/^https?:\/\//i.test(raw)) {
+      skillProgress('从 URL 拉取…');
+      try {
+        handleParsed(await fetchSkillFromUrl(raw, P), raw);
+      } catch (e) { skillProgress(''); toast('拉取失败：' + e.message); }
+      return;
+    }
+
+    // 3) SKILL.md 文本
+    skillProgress('解析粘贴内容…');
+    try {
+      handleParsed(P.parseSkillText(raw), '粘贴');
+    } catch (e) { skillProgress(''); toast('解析失败：' + e.message); }
+  };
+}
+
+// 从任意 URL 拉取技能包：按内容自动判定（zip / RedSkill JSON manifest→二次下载 / SKILL.md 文本）
+async function fetchSkillFromUrl(url, P) {
+  const r = await api('/api/skills/fetch', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ url }),
+  });
+  if (r.error) throw new Error(r.error);
+  if (r.kind === 'zip') return P.parseSkillZip(P.base64ToBytes(r.data));
+  if (r.kind === 'json') {
+    let manifest;
+    try { manifest = JSON.parse(r.data); } catch { throw new Error('URL 返回的 JSON 无法解析'); }
+    const inner = manifest && manifest.data ? manifest.data : manifest;
+    const zipUrl = inner && inner.zip_url;
+    if (!zipUrl) throw new Error('URL 返回 JSON 但不是技能包（无 zip_url 字段）');
+    const r2 = await api('/api/skills/fetch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ url: zipUrl }),
+    });
+    if (r2.error) throw new Error(r2.error);
+    if (r2.kind !== 'zip') throw new Error('技能包二次下载未返回 zip');
+    return P.parseSkillZip(P.base64ToBytes(r2.data));
+  }
+  return P.parseSkillText(r.data, String(r.filename || url).replace(/\.(md|markdown|txt)$/i, ''));
 }
 
 async function saveAgent(id, fields) {
@@ -3392,4 +4109,53 @@ api('/api/favorites').then((data) => {
 }).catch(() => {});
 if (initialView === 'ai') renderAiSettings();
 else renderHome();
+
+// ============ App 端自测钩子（调试用，正常使用不会触发）============
+// MainActivity 在页面加载后可调用 window.runSelfTest()，结果经 console.log 输出
+// （Capacitor 会转发到 logcat 的 Capacitor/Console 标签）。验证：设置筛选 →
+// 专项练习模块刷题按筛选出题 → 背题模式交互。跑完自动恢复默认配置。
+async function runSelfTest() {
+  const out = [];
+  try {
+    const origApi = window.api;
+    window.__urls = [];
+    window.api = (path, opts) => { window.__urls.push(String(path)); return origApi(path, opts); };
+    // 1. 打开面板并设置：背题模式 + 近5年 + 偏难 → 确定
+    openCustomPractice('公务员·行测');
+    const clickChip = (id, key, val) => {
+      const c = [...document.querySelectorAll(`#${id} .chip`)].find((x) => x.dataset[key] === val);
+      if (c) c.click();
+    };
+    clickChip('cp-mode', 'mode', 'recite');
+    clickChip('cp-year', 'year', '5');
+    clickChip('cp-diff', 'diff', 'hard');
+    document.querySelector('#btn-cp-save').click();
+    out.push('cfg=' + JSON.stringify(store.customConfig));
+    // 2. 专项练习页应显示当前筛选
+    await renderSubject('公务员·行测');
+    out.push('card=' + (document.querySelector('.card-sub')?.textContent || '').trim());
+    // 3. 点「判断推理 → 全部」进入模块刷题
+    await renderPractice('公务员·行测', null, null, 0, true, '判断推理', '全部');
+    out.push('tip=' + (document.querySelector('.timer-tip')?.textContent || '').trim());
+    out.push('req=' + window.__urls.filter((u) => u.includes('/api/practice')).join(' | '));
+    // 3.5 离线本地 API 直调：验证 year/difficulty 参数被正确透传并返回题目（App 离线库）
+    if (window.__LOCAL_API_PROMISE__) {
+      const handler = await window.__LOCAL_API_PROMISE__;
+      const subj = encodeURIComponent('公务员·行测'), g = encodeURIComponent('判断推理'), s = encodeURIComponent('全部');
+      const r5 = await handler(`/api/practice?subject=${subj}&group=${g}&sub=${s}&mock=0&n=15&year=5&difficulty=hard`);
+      const r0 = await handler(`/api/practice?subject=${subj}&group=${g}&sub=${s}&mock=0&n=15&year=all&difficulty=random`);
+      out.push('local5=' + (Array.isArray(r5) ? r5.length : '非数组') + ' localAll=' + (Array.isArray(r0) ? r0.length : '非数组'));
+    } else out.push('local5=none');
+    // 4. 背题交互：点选判分、不跳题、锁定
+    document.querySelector('.option')?.click();
+    await new Promise((r) => setTimeout(r, 800));
+    out.push('fb=' + (document.querySelector('#answer-feedback .ab-title')?.textContent || 'none').trim());
+    out.push('locked=' + document.querySelectorAll('.option.locked').length + '/' + document.querySelectorAll('.option').length);
+    out.push('prog=' + (document.querySelector('.q-progress-text')?.textContent || '').trim());
+    // 5. 恢复默认筛选
+    store.customConfig = { mode: 'practice', year: '10', difficulty: 'random' };
+    localStorage.removeItem('custom_practice_cfg');
+  } catch (e) { out.push('ERR=' + ((e && e.message) || e)); }
+  console.log('[AUTOTEST] ' + out.join(' | '));
+}
 

@@ -123,16 +123,94 @@ const SKILL_BUNDLES = {
 };
 const _skillCache = {}; // name -> { text, files } | null（null 表示加载失败，避免反复 fetch）
 
+// ---------- 用户技能库（AI 设置页「技能库」导入；IndexedDB，与 server user_skills 表同构） ----------
+
+const SKILLS_DB = 'kaogong_skills_db';
+const SKILLS_STORE = 'user_skills';
+
+function skillsDbOpen() {
+  return new Promise((resolve, reject) => {
+    const req = indexedDB.open(SKILLS_DB, 1);
+    req.onupgradeneeded = () => {
+      const db = req.result;
+      if (!db.objectStoreNames.contains(SKILLS_STORE)) db.createObjectStore(SKILLS_STORE, { keyPath: 'name' });
+    };
+    req.onsuccess = () => resolve(req.result);
+    req.onerror = () => reject(req.error);
+  });
+}
+
+async function skillGet(name) {
+  try {
+    const db = await skillsDbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SKILLS_STORE, 'readonly');
+      const r = tx.objectStore(SKILLS_STORE).get(name);
+      r.onsuccess = () => resolve(r.result);
+      r.onerror = () => reject(r.error);
+    });
+  } catch { return undefined; }
+}
+
+async function skillList() {
+  try {
+    const db = await skillsDbOpen();
+    return await new Promise((resolve, reject) => {
+      const tx = db.transaction(SKILLS_STORE, 'readonly');
+      const r = tx.objectStore(SKILLS_STORE).getAll();
+      r.onsuccess = () => resolve(r.result || []);
+      r.onerror = () => reject(r.error);
+    });
+  } catch { return []; }
+}
+
+async function skillPut(skill) {
+  const db = await skillsDbOpen();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(SKILLS_STORE, 'readwrite');
+    tx.objectStore(SKILLS_STORE).put(skill);
+    tx.oncomplete = () => resolve();
+    tx.onerror = () => reject(tx.error);
+  });
+}
+
+async function skillDelete(name) {
+  try {
+    const db = await skillsDbOpen();
+    await new Promise((resolve, reject) => {
+      const tx = db.transaction(SKILLS_STORE, 'readwrite');
+      tx.objectStore(SKILLS_STORE).delete(name);
+      tx.oncomplete = () => resolve();
+      tx.onerror = () => reject(tx.error);
+    });
+    return true;
+  } catch { return false; }
+}
+
+/** 用户技能库列表（不含 text 全文；附 inUse：被哪些智能体引用） */
+async function listUserSkillsLocal(agents) {
+  const all = await skillList();
+  return all.map((s) => {
+    const inUse = agents.filter((a) => String(a.skill || '').trim() === String(s.name)).map((a) => a.name);
+    return { id: undefined, name: s.name, description: s.description || '', files: s.files || [], inUse, created_at: s.created_at || '' };
+  }).sort((a, b) => String(a.name).localeCompare(String(b.name)));
+}
+
 async function resolveSkillLocal(skillField) {
   const s = String(skillField || '').trim();
   if (!s) return { text: '', loaded: null };
+  // 1) 用户导入的技能库（优先于内置 bundle，可覆盖同名内置技能）
+  const user = await skillGet(s);
+  if (user && String(user.text || '').trim()) {
+    return { text: user.text, loaded: { name: s, files: (user.files || []).length || 1, source: 'user' } };
+  }
   if (!SKILL_BUNDLES[s]) return { text: s, loaded: null };
   if (_skillCache[s] !== undefined) return _skillCache[s];
   try {
     const res = await fetch(SKILL_BUNDLES[s], { cache: 'no-cache' });
     if (!res.ok) throw new Error(res.status);
     const bundle = await res.json();
-    const r = { text: bundle.text, loaded: { name: s, files: bundle.files } };
+    const r = { text: bundle.text, loaded: { name: s, files: bundle.files, source: 'builtin' } };
     _skillCache[s] = r;
     return r;
   } catch {
@@ -152,6 +230,8 @@ async function callVisionLocal(agent, imageDataUrl, mode = 'ocr', request) {
   const url = String(agent.base_url).replace(/\/+$/, '') + '/chat/completions';
   const text = mode === 'ocr'
     ? '这是一张考生手写或打印的答题纸图片。请逐字准确转写图片中的全部作答文字（包括标点、数字、段落换行）。要求：1) 手写潦草处根据上下文合理推断；2) 不要修改、润色或添加任何内容；3) 只输出识别出的原文，不要任何解释或标记。'
+    : mode === 'structure'
+    ? '这是一张考公题目图片（试卷/练习册/资料截图，可能包含一道或多道题，也可能混有笔记、页码等非题目内容）。请仔细观察整张图片：先筛选出真正的题目（过滤笔记、说明、考情、页眉页脚、页码等非题目内容；拿不准但疑似题目的保留），再把每道题整理为结构化 JSON，只输出 JSON，不要任何其他文字、解释或 Markdown 代码块：\n{"questions":[{"prompt":"题干","material":"材料（材料题才有的背景材料；没有则为空字符串）","options":["选项文本1","选项文本2"],"answer":"答案原文（如 A / AB / 正确；没有则为空字符串）","analysis":"解析（没有则为空字符串）"}]}\n要求：忠实图片内容，不编造、不补全缺失信息；一道题一个对象；同一材料下有多道小题时，每道小题的 material 都填同一材料；选项顺序与图片一致；判断题没有选项时 options 留空数组；OCR 转写造成的错别字尽量按常识修正，无法确认的保留原文。'
     : '这是一道考公题目的图片（可能包含题干图形序列和 A/B/C/D 选项图形）。请逐一详细转写图片中的全部内容：题干部分描述每个图形的形状/线条/数量/位置/规律；选项部分标注 A/B/C/D 对应关系。不要遗漏任何图形或文字。';
   const body = {
     model: agent.model,
@@ -322,8 +402,8 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
   }
   if (!Array.isArray(defaults) || !defaults.length) {
     defaults = [
-      { id: 1, name: '行测解析 AI', role: 'xingce-explainer', description: '行测/职测选择题解析', system_prompt: '你是一名资深公务员考试行测讲师。请解析用户发来的行测选择题：给出考点、正确项解析、错误项排除、解题技巧。', skill: 'gongkao-huasheng13', base_url: 'https://opencode.ai/zen/go/v1', api_key: '', model: 'deepseek-v4-flash', temperature: 0.3, max_tokens: 4000, enabled: 0 },
-      { id: 2, name: '申论批改 AI', role: 'shenlun-grader', description: '申论/综应主观题批改', system_prompt: '你是一名申论阅卷官。请对用户的作答按要点采分制评分（满分100），给出评分、参考答案要点、丢分原因、改进建议。', skill: 'shenlun-master', base_url: 'https://opencode.ai/zen/go/v1', api_key: '', model: 'deepseek-v4-flash', temperature: 0.4, max_tokens: 2000, enabled: 0 },
+      { id: 1, name: '行测解析 AI', role: 'xingce-explainer', description: '行测/职测选择题解析', system_prompt: '你是一名资深公务员考试行测讲师。请解析用户发来的行测选择题：给出考点、正确项解析、错误项排除、解题技巧。', skill: 'gongkao-huasheng13', base_url: 'https://opencode.ai/zen/v1', api_key: '', model: 'deepseek-v4-flash-free', temperature: 0.3, max_tokens: 4000, enabled: 0 },
+      { id: 2, name: '申论批改 AI', role: 'shenlun-grader', description: '申论/综应主观题批改', system_prompt: '你是一名申论阅卷官。请对用户的作答按要点采分制评分（满分100），给出评分、参考答案要点、丢分原因、改进建议。', skill: 'shenlun-master', base_url: 'https://opencode.ai/zen/v1', api_key: '', model: 'deepseek-v4-flash-free', temperature: 0.4, max_tokens: 2000, enabled: 0 },
       { id: 4, name: '识图转写员', role: 'image-reader', description: '多模态识图：图形/图表/公式图 + 申论综应手写作答图转写', system_prompt: '你是一名图像识别转写助手。请把图片内容完整准确地转写成文字：图形描述形状数量位置旋转颜色规律，图表描述行列标题数据坐标轴图例趋势，公式文字图完整抄录，手写作答逐字转写保留格式不修正错别字（辨识不清用【？】标注）。只输出转写文本。', skill: '', base_url: '', api_key: '', model: 'GLM-4.1V-Thinking-Flash', temperature: 0.1, max_tokens: 2000, enabled: 0 },
       { id: 6, name: '题目解析员', role: 'custom-question-parser', description: '自定义题库导入：筛选并整理题目为结构化 JSON', system_prompt: '你是一名公务员考试题目整理助手。请把题目原始文本（可能混有笔记/说明等非题内容）先筛选出真正的题目，再整理为 JSON：{"questions":[{"prompt":"题干","material":"材料","options":["选项1","选项2"],"answer":"答案","analysis":"解析"}]}。过滤非题内容，忠实原文不编造，没有的字段留空，只输出 JSON。', skill: '', base_url: '', api_key: '', model: 'GLM-4.1V-Thinking-Flash', temperature: 0.1, max_tokens: 4000, enabled: 0 },
     ];
@@ -516,11 +596,23 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
       return callVisionLocal(agent, String(image), 'ocr', request);
     },
 
-    /** POST /api/ai/structure — 自定义题库：题目文本筛选整理（custom-question-parser）；与 server 同构 */
-    async structure({ text }) {
+    /** POST /api/ai/structure — 自定义题库：题目文本/图片筛选整理（custom-question-parser）；与 server 同构
+     *  图片：视觉模型直接看图出结构化 JSON（AI 优先），失败自动降级 OCR→文本结构化 */
+    async structure({ text, image }) {
       const agent = loadAgents(defaults).find((x) => x.role === 'custom-question-parser');
       if (!agent) return { error: '题目解析员未启用，请到 AI 设置页配置' };
-      if (!text || !String(text).trim()) return { error: '缺少文本' };
+      if (!text && !image) return { error: '缺少文本或图片' };
+      if (image) {
+        if (!String(image).startsWith('data:image')) return { error: '图片格式不正确' };
+        if (!agent.api_key || !agent.base_url) return { error: '该 AI 未配置 api_key，请到 AI 设置页填写' };
+        const v = await callVisionLocal(agent, String(image), 'structure', request);
+        if (v.content) return v;
+        // 降级：OCR 转文字 → 文本结构化
+        const ocr = await callVisionLocal(agent, String(image), 'ocr', request);
+        if (ocr.error) return { error: v.error || ocr.error };
+        return callChat(agent, ocr.content, request);
+      }
+      if (!String(text).trim()) return { error: '缺少文本' };
       return callChat(agent, String(text), request);
     },
 
@@ -570,6 +662,93 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
     async clearExplainCache() {
       const cleared = await clearExplainCache();
       return { cleared };
+    },
+
+    // ---------- 技能库（App 端 IndexedDB，与 server /api/skills 同构） ----------
+
+    /** GET /api/skills — 技能列表（含 inUse 引用标记） */
+    async skills() {
+      return listUserSkillsLocal(loadAgents(defaults));
+    },
+
+    /** POST /api/skills — 新增/覆盖技能（同名 = 覆盖）；被引用时清解析缓存 */
+    async addSkill({ name, description = '', text, files = [] } = {}) {
+      const n = String(name || '').trim();
+      const t = String(text || '').trim();
+      if (!n) return { error: '技能名不能为空' };
+      if (n.length > 100) return { error: '技能名过长（≤100 字符）' };
+      if (!t) return { error: '技能内容不能为空' };
+      if (t.length > 2 * 1024 * 1024) return { error: '技能内容过大（>2MB），请精简后重试' };
+      const existed = !!(await skillGet(n));
+      await skillPut({ name: n, description: String(description || ''), text: t, files: Array.isArray(files) ? files : [], created_at: nowStr() });
+      const referenced = loadAgents(defaults).some((a) => String(a.skill || '').trim() === n);
+      if (referenced) clearExplainCache();
+      return { ok: true, name: n, replaced: existed, referenced };
+    },
+
+    /** DELETE /api/skills/:name — 删除技能（被引用智能体的 skill 字段保留，解析回落纯文本） */
+    async deleteSkill(name) {
+      const ok = await skillDelete(String(name || '').trim());
+      if (ok) clearExplainCache();
+      return { ok };
+    },
+
+    /** POST /api/skills/fetch — URL 拉取技能包（App 端 CapacitorHttp 直连，无 CORS） */
+    async fetchSkillUrl(url) {
+      const u = String(url || '').trim();
+      if (!/^https?:\/\//i.test(u)) return { error: '仅支持 http(s) 链接' };
+      try {
+        let base64 = '';
+        let contentType = '';
+        if (window.Capacitor && window.Capacitor.Plugins && window.Capacitor.Plugins.CapacitorHttp) {
+          const r = await window.Capacitor.Plugins.CapacitorHttp.request({
+            url: u, method: 'GET',
+            connectTimeout: 15000, readTimeout: 90000,
+            responseType: 'arraybuffer',
+          });
+          if (!(r.status >= 200 && r.status < 300)) return { error: `拉取失败：HTTP ${r.status}` };
+          // CapacitorHttp 的 r.data 可能是 string（base64/原始文本）、object（已解析 JSON）、或 null
+          contentType = String((r.headers && (r.headers['content-type'] || r.headers['Content-Type'])) || '');
+          if (r.data && typeof r.data === 'object' && !Array.isArray(r.data)) {
+            // 已解析的 JSON 对象 → 序列化回字符串，不经过 base64
+            const text = JSON.stringify(r.data);
+            const isJson = /json/i.test(contentType);
+            if (text.length > 20 * 1024 * 1024) return { error: '文件过大（>20MB）' };
+            return { kind: isJson ? 'json' : 'text', data: text, filename: u.split('/').pop().split('?')[0] || '' };
+          }
+          base64 = String(r.data || '');
+        } else {
+          const resp = await fetch(u, { redirect: 'follow' });
+          if (!resp.ok) return { error: `拉取失败：HTTP ${resp.status}` };
+          const buf = await resp.arrayBuffer();
+          base64 = await new Promise((resolve, reject) => {
+            const fr = new FileReader();
+            fr.onload = () => resolve(String(fr.result).split(',')[1] || '');
+            fr.onerror = () => reject(fr.error);
+            fr.readAsDataURL(new Blob([buf]));
+          });
+          contentType = resp.headers.get('content-type') || '';
+        }
+        // 尝试解码 base64；若 CapacitorHttp 返回的是原始字符串而非 base64，atob 会抛异常，回退为原始文本
+        let decodedBytes = null;
+        try {
+          const bin = atob(base64);
+          decodedBytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) decodedBytes[i] = bin.charCodeAt(i);
+        } catch { /* base64 不是有效编码 → decodedBytes 保持 null，后续当纯文本处理 */ }
+        const isZip = /zip|octet-stream/i.test(contentType) || /\.zip(?:$|\?)/i.test(u) || (decodedBytes && decodedBytes.length >= 2 && decodedBytes[0] === 0x50 && decodedBytes[1] === 0x4b);
+        if (isZip) {
+          if (base64.length > 28 * 1024 * 1024) return { error: '文件过大（>20MB）' }; // base64 ≈ 4/3 × 字节数
+          return { kind: 'zip', data: base64, filename: u.split('/').pop().split('?')[0] || '' };
+        }
+        const text = decodedBytes ? new TextDecoder('utf-8').decode(decodedBytes) : base64;
+        if (text.length > 20 * 1024 * 1024) return { error: '文件过大（>20MB）' };
+        // RedSkill API 返回 JSON manifest（含 zip_url）：标为 json 让前端走二次下载
+        const isJson = /json/i.test(contentType) || (text.trim().startsWith('{') && text.trim().endsWith('}'));
+        return { kind: isJson ? 'json' : 'text', data: text, filename: u.split('/').pop().split('?')[0] || '' };
+      } catch (e) {
+        return { error: `拉取失败：${e.message || e}` };
+      }
     },
   };
 }

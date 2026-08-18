@@ -97,6 +97,9 @@ export function createLocalHandler({ query, records, store, ai }) {
         sub: qs.get('sub') || undefined,
         mock: qs.get('mock') || '',
         n: Number(qs.get('n') || 10),
+        year: qs.get('year') || undefined, // 自定义刷题：'all'|'3'|'5'|'10'；缺省近十年
+        difficulty: qs.get('difficulty') || undefined, // 自定义刷题：'easy'|'balanced'|'hard'|'random'
+        custom: qs.get('custom') === '1', // 自定义刷题：题量由面板控制
       });
     }
     if (route === 'GET /question') {
@@ -200,6 +203,21 @@ export function createLocalHandler({ query, records, store, ai }) {
       if (verb === 'POST' && sub === 'test') return ai.test(id, body.content);
     }
 
+    // ---------- 技能库（App 端 IndexedDB；与 server /api/skills 同构） ----------
+    if (route === 'GET /skills') return ai.skills();
+    if (route === 'POST /skills') {
+      const r = await ai.addSkill(body || {});
+      if (r.error) throw new Error(r.error);
+      return r;
+    }
+    if (route === 'POST /skills/fetch') {
+      const r = await ai.fetchSkillUrl((body || {}).url);
+      if (r.error) throw new Error(r.error);
+      return r;
+    }
+    const skillDel = route.match(/^DELETE \/skills\/(.+)$/);
+    if (skillDel) return ai.deleteSkill(decodeURIComponent(skillDel[1]));
+
     // ---------- 自定义题库（2026-08-15，IndexedDB：custom_batches / custom_questions） ----------
     // 导入：建批次 + 批量插题
     if (route === 'POST /custom/import') {
@@ -236,14 +254,15 @@ export function createLocalHandler({ query, records, store, ai }) {
       const list = all.filter((q) => Number(q.batch_id) === bid).sort((a, b) => Number(a.id) - Number(b.id));
       return { questions: list };
     }
-    // 批改名
+    // 批改名（可同时改科目）
     if (route === 'PUT /custom/batch') {
       const bid = Number(body.id);
       if (!bid || !String(body.name || '').trim()) throw new Error('缺少 id 或批次名');
       const batches = await store.getAll('custom_batches');
       const b = batches.find((x) => Number(x.id) === bid);
       if (!b) throw new Error('批次不存在');
-      await store.put('custom_batches', { ...b, name: String(body.name).trim() });
+      const subject = String(body.subject || '').trim();
+      await store.put('custom_batches', { ...b, name: String(body.name).trim(), ...(subject ? { subject } : {}) });
       return { ok: true };
     }
     // 合并批次：题目并入最小 id 批次，删其余
