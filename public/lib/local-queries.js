@@ -31,9 +31,34 @@ const Q_QUESTION_BY_ID =
   'SELECT questionId, paperId, chapter, type, content, contentHtml, options, answer, answerIndex, difficulty, analysis FROM questions WHERE questionId = ? ORDER BY id LIMIT 1';
 const Q_MATERIALS_BY_PAPER =
   'SELECT title, idx, text FROM materials WHERE paperId = ? ORDER BY idx';
-const Q_CAT_INDEX = (withSub) => withSub
-  ? 'SELECT qc.question_id FROM question_categories qc WHERE qc.category = ? AND qc.sub = ? AND qc.subject = ? AND EXISTS (SELECT 1 FROM questions q WHERE q.questionId = qc.question_id) ORDER BY RANDOM() LIMIT ?'
-  : 'SELECT qc.question_id FROM question_categories qc WHERE qc.category = ? AND qc.subject = ? AND EXISTS (SELECT 1 FROM questions q WHERE q.questionId = qc.question_id) ORDER BY RANDOM() LIMIT ?';
+// ============ 题库精简（2026-08）：只保留近十年试卷（年份取试卷名前缀，如 "2024年..."） ============
+// 无年份名称（如 "天津市2"）substr 得非数字 → 自然排除；按分类刷试卷(/api/papers)不受影响
+const NOW_YEAR = new Date().getFullYear();
+const YEAR_FROM = NOW_YEAR - 9; // 近十年下限（2026 年即 2017）
+const YEAR_TO = NOW_YEAR;
+// year: 'all'=不限（自定义刷题可选） | '3'/'5'/'10'=近 N 年 | 缺省=近十年（精简口径）
+function yearCond(year) {
+  if (year === 'all' || year == null || year === '') return '';
+  const y = parseInt(year, 10);
+  const n = Number.isInteger(y) && y >= 3 ? y : 10;
+  return ` AND substr(p.name, 1, 4) BETWEEN '${NOW_YEAR - n + 1}' AND '${NOW_YEAR}'`;
+}
+// 难度过滤（与 server diffCond 相同，粉笔 difficulty 1-9）：random/缺省不限难度（含未标注）
+function diffCond(difficulty) {
+  if (difficulty === 'random' || difficulty == null || difficulty === '') return '';
+  const d = XINGCE_DIFFICULTY[difficulty];
+  if (!d) return '';
+  return ` AND q.difficulty BETWEEN ${d.min} AND ${d.max}`;
+}
+const Q_CAT_INDEX = (withSub, dc = '') => withSub
+  ? `SELECT qc.question_id FROM question_categories qc
+     JOIN questions q ON q.questionId = qc.question_id
+     JOIN papers p ON p.id = q.paperId
+     WHERE qc.category = ? AND qc.sub = ? AND qc.subject = ? AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'${dc} GROUP BY qc.question_id ORDER BY RANDOM() LIMIT ?`
+  : `SELECT qc.question_id FROM question_categories qc
+     JOIN questions q ON q.questionId = qc.question_id
+     JOIN papers p ON p.id = q.paperId
+     WHERE qc.category = ? AND qc.subject = ? AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'${dc} GROUP BY qc.question_id ORDER BY RANDOM() LIMIT ?`;
 
 // ============ 智能组卷（行测）本地版常量（与 server.mjs 同构） ============
 // 行测考情基准：市地/执法 130 题 / 120 分钟；官方模块序与题量；score 为机构通行单题分值估算
@@ -219,9 +244,9 @@ export function checkAnswer(q, selected) {
   return { ok: null, correct: [], selected: sel, correctText: [] }; // 真正无答案：不判分
 }
 
-/** 随机出题（与 server randomQuestions 相同；tiku 为适配器） */
-function randomQuestions(tiku, subject, chapters, n, mock) {
-  const cond = mockCond(mock);
+/** 随机出题（与 server randomQuestions 相同；tiku 为适配器；year: 'all'|'3'|'5'|'10'，缺省近十年；difficulty: 'easy'|'balanced'|'hard'|'random'） */
+function randomQuestions(tiku, subject, chapters, n, mock, year, difficulty) {
+  const cond = mockCond(mock) + yearCond(year === undefined ? '10' : year) + diffCond(difficulty);
   const chList = Array.isArray(chapters) ? chapters.filter(Boolean) : (chapters ? [chapters] : []);
   const chCond = chList.length ? `AND q.chapter IN (${chList.map(() => '?').join(',')}) ` : '';
   const where = `p.subjectName = ? ${chCond}${cond}`;
@@ -291,8 +316,9 @@ export function essayObjectiveGroup(ch) {
 }
 
 /** 题组增强：把题目按材料归组（与 server enrichGroups 相同；tiku/practice 为适配器） */
-function enrichGroups(tiku, practice, rows, subject) {
+function enrichGroups(tiku, practice, rows, subject, diffFilter) {
   const qids = rows.map((r) => r.id ?? r.questionId);
+  let dropped = null; // 难度过滤时被整组剔除的题
   let maps = [];
   if (qids.length) {
     maps = practice.all(`SELECT question_id, material_id FROM q_material_map WHERE subject = ? AND question_id IN (${qids.map(() => '?').join(',')})`, subject, ...qids);
@@ -305,6 +331,21 @@ function enrichGroups(tiku, practice, rows, subject) {
     for (const m of mem) {
       if (!groupMembers.has(m.material_id)) groupMembers.set(m.material_id, []);
       groupMembers.get(m.material_id).push(m.question_id);
+    }
+    if (diffFilter) {
+      const allIds = [...new Set([...qids, ...[...groupMembers.values()].flat()])];
+      const diffs = new Map(tiku.all(`SELECT questionId, difficulty FROM questions WHERE questionId IN (${allIds.map(() => '?').join(',')})`, ...allIds).map((q) => [q.questionId, q.difficulty]));
+      const bad = new Set(); // 不满足难度的题
+      for (const [gid, members] of groupMembers) {
+        const ok = members.every((mid) => {
+          const d = diffs.get(mid);
+          return d != null && d >= diffFilter.min && d <= diffFilter.max;
+        });
+        if (!ok) { bad.add(gid); for (const mid of members) bad.add(mid); }
+      }
+      dropped = bad;
+      for (const mid of bad) gidOf.delete(mid);
+      for (const gid of bad) if (groupMembers.has(gid)) groupMembers.delete(gid);
     }
   }
   for (const [gid, members] of groupMembers) {
@@ -324,6 +365,7 @@ function enrichGroups(tiku, practice, rows, subject) {
   const byId = new Map(qs.map((q) => [q.questionId, q]));
   const out = [];
   for (const q of qs) {
+    if (dropped?.has(q.questionId)) continue; // 难度过滤：整组剔除的题不输出
     const gid = gidOf.get(q.questionId);
     const o = byId.get(q.questionId);
     let gi = 0, gt = 1, mat = null;
@@ -398,7 +440,10 @@ function trimToMax(rows, max) {
  */
 function buildPaperPool(tiku, practice, subject) {
   const byKey = new Map();
-  for (const r of practice.all('SELECT question_id, category, sub FROM question_categories WHERE subject = ?', subject)) {
+  for (const r of practice.all(`SELECT qc.question_id, qc.category, qc.sub FROM question_categories qc
+    JOIN questions q ON q.questionId = qc.question_id
+    JOIN papers p ON p.id = q.paperId AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
+    WHERE qc.subject = ?`, subject)) {
     const k = `${r.category}|${r.sub}`;
     let arr = byKey.get(k);
     if (!arr) byKey.set(k, (arr = []));
@@ -406,7 +451,10 @@ function buildPaperPool(tiku, practice, subject) {
   }
   const materialSet = new Set();
   const groupMap = new Map();
-  for (const r of practice.all('SELECT question_id, material_id FROM q_material_map WHERE subject = ? AND material_id IS NOT NULL', subject)) {
+  for (const r of practice.all(`SELECT mm.question_id, mm.material_id FROM q_material_map mm
+    JOIN questions q ON q.questionId = mm.question_id
+    JOIN papers p ON p.id = q.paperId AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
+    WHERE mm.subject = ? AND mm.material_id IS NOT NULL`, subject)) {
     materialSet.add(r.question_id);
     let arr = groupMap.get(r.material_id);
     if (!arr) groupMap.set(r.material_id, (arr = []));
@@ -593,10 +641,14 @@ export function createLocalApi(tiku, practice, stats = {}) {
                COUNT(DISTINCT tq.questionId) AS questions
         FROM papers tp
         LEFT JOIN questions tq ON tq.paperId = tp.id
+        WHERE substr(tp.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
         GROUP BY tp.subjectName
       `);
       // 综应只保留 A 类：主界面题目数按分类树口径（question_categories），与专项练习一致
-      const zongyingN = Number(tiku.get(`SELECT COUNT(DISTINCT question_id) AS n FROM question_categories WHERE subject = '事业编·综应'`)?.n || 0);
+      const zongyingN = Number(tiku.get(`SELECT COUNT(DISTINCT qc.question_id) AS n FROM question_categories qc
+        JOIN questions q ON q.questionId = qc.question_id
+        JOIN papers p ON p.id = q.paperId AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
+        WHERE qc.subject = '事业编·综应'`)?.n || 0);
       return rows.map((r) => ({
         subjectName: r.subjectName,
         papers: Number(r.papers),
@@ -609,7 +661,7 @@ export function createLocalApi(tiku, practice, stats = {}) {
     categories(subject) {
       if (!subject) throw new Error('缺少 subject');
       return tiku.all(
-        'SELECT p.category, COUNT(DISTINCT p.id) AS papers, COUNT(DISTINCT q.questionId) AS questions FROM papers p LEFT JOIN questions q ON q.paperId = p.id WHERE p.subjectName = ? GROUP BY p.category ORDER BY papers DESC',
+        `SELECT p.category, COUNT(DISTINCT p.id) AS papers, COUNT(DISTINCT q.questionId) AS questions FROM papers p LEFT JOIN questions q ON q.paperId = p.id WHERE p.subjectName = ? AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}' GROUP BY p.category ORDER BY papers DESC`,
         subject
       );
     },
@@ -637,24 +689,32 @@ export function createLocalApi(tiku, practice, stats = {}) {
       return tiku.all(Q_MATERIALS_BY_PAPER, paperId);
     },
 
-    /** 单题（与 /api/question 同构；含 subject） */
+    /** 单题（与 /api/question 同构；含 subject；材料组题带 material/组信息） */
     questionById(id) {
       const q = tiku.get(Q_QUESTION_BY_ID, id);
       if (!q) throw Object.assign(new Error('题目不存在'), { status: 404 });
       const subject = tiku.get('SELECT subjectName FROM papers WHERE id = ?', q.paperId)?.subjectName ?? '';
-      return { ...toQuestion(q), subject };
+      // 材料组信息（与 /api/practice 同构）：错题本/收藏夹单题重练也要显示给定材料
+      const [enriched] = enrichGroups(tiku, practice, [q], subject, null);
+      return { ...(enriched || toQuestion(q)), subject };
     },
 
     /** 随机出题（与 /api/practice 同构；支持章节/树节点/题组） */
-    practice(subject, { chapter, chapters, group, sub, mock, n = 10 } = {}) {
+    practice(subject, { chapter, chapters, group, sub, mock, n = 10, year, difficulty, custom } = {}) {
       if (!subject) throw new Error('缺少 subject');
       const chList = chapters ? chapters.split(',').map((s) => s.trim()).filter(Boolean) : (chapter ? [chapter] : null);
-      const max = practiceMax(subject, group, chList);
+      // 自定义刷题（custom=1）：题量由面板控制，不走随机练习的 15 题/申论 2 题规则
+      const max = custom ? n : practiceMax(subject, group, chList);
+      // 自定义刷题：多抽 3 倍候选（材料组整组剔除后仍能凑满），再按面板题量裁剪
+      const fetchN = custom ? Math.min(n * 3, 150) : n;
+      // 材料组整组难度检查（自定义刷题难度过滤时）：组内任一题不满足 → 整组剔除；random/缺省不检查
+      const diffFilter = (difficulty && difficulty !== 'random' && XINGCE_DIFFICULTY[difficulty]) || null;
       if (group) {
         if (subject === '公务员·申论' || subject === '事业编·综应' || subject === '公务员·行测' || subject === '事业编·职测') {
+          const dc = diffCond(difficulty);
           const ids = (sub === '全部'
-            ? practice.all(Q_CAT_INDEX(false), group, subject, n)
-            : practice.all(Q_CAT_INDEX(true), group, sub, subject, n)
+            ? practice.all(Q_CAT_INDEX(false, dc), group, subject, fetchN)
+            : practice.all(Q_CAT_INDEX(true, dc), group, sub, subject, fetchN)
           ).map((r) => r.question_id);
           if (!ids.length) return [];
           const qs = tiku.all(
@@ -662,19 +722,19 @@ export function createLocalApi(tiku, practice, stats = {}) {
              FROM questions q WHERE q.questionId IN (${ids.map(() => '?').join(',')}) GROUP BY q.questionId`,
             ...ids
           );
-          return trimToMax(enrichGroups(tiku, practice, qs, subject), max);
+          return trimToMax(enrichGroups(tiku, practice, qs, subject, diffFilter), max);
         }
         const chs = tiku.all(`
           SELECT DISTINCT q.chapter FROM questions q JOIN papers p ON p.id = q.paperId
-          WHERE p.subjectName = ? AND q.chapter != ''
+          WHERE p.subjectName = ? AND q.chapter != '' ${yearCond(year === undefined ? '10' : year)}
         `, subject).map((r) => r.chapter).filter((ch) => {
           const node = mapEssayChapterToNode(ch);
           return node && node.group === group && (sub === '全部' || node.sub === sub);
         });
-        const rows = randomQuestions(tiku, subject, chs.length ? chs : null, n, mock);
-        return trimToMax(enrichGroups(tiku, practice, rows, subject), max);
+        const rows = randomQuestions(tiku, subject, chs.length ? chs : null, fetchN, mock, year, difficulty);
+        return trimToMax(enrichGroups(tiku, practice, rows, subject, diffFilter), max);
       }
-      return trimToMax(enrichGroups(tiku, practice, randomQuestions(tiku, subject, chList, n, mock), subject), max);
+      return trimToMax(enrichGroups(tiku, practice, randomQuestions(tiku, subject, chList, fetchN, mock, year, difficulty), subject, diffFilter), max);
     },
 
     /** 智能组卷：与 server buildXingcePaper/buildZhiCePaper 同构（本地版：索引抽候选 → 查题 → JS 过滤源/难度/题型） */
@@ -860,7 +920,7 @@ export function createLocalApi(tiku, practice, stats = {}) {
       const cond = mockCond(mock);
       const totals = tiku.all(`
         SELECT q.chapter, COUNT(*) c FROM questions q JOIN papers p ON p.id = q.paperId
-        WHERE p.subjectName = ? ${cond} GROUP BY q.chapter ORDER BY c DESC
+        WHERE p.subjectName = ? ${cond}${yearCond('10')} GROUP BY q.chapter ORDER BY c DESC
       `, subject);
       const doneMap = statOf('chapterStats').get(subject) || new Map();
       const list = totals.map((t) => {
@@ -912,8 +972,10 @@ export function createLocalApi(tiku, practice, stats = {}) {
       if (isXingce) {
         const idxMap = new Map();
         for (const r of practice.all(`
-          SELECT qc.category, qc.sub, COUNT(*) c FROM question_categories qc
-          WHERE qc.subject = ? AND EXISTS (SELECT 1 FROM questions q WHERE q.questionId = qc.question_id)
+          SELECT qc.category, qc.sub, COUNT(DISTINCT qc.question_id) c FROM question_categories qc
+          JOIN questions q ON q.questionId = qc.question_id
+          JOIN papers p ON p.id = q.paperId AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
+          WHERE qc.subject = ?
           GROUP BY qc.category, qc.sub
         `, subject)) {
           idxMap.set(`${r.category}|${r.sub}`, r.c);
@@ -932,9 +994,10 @@ export function createLocalApi(tiku, practice, stats = {}) {
           if (essayFromIndex) {
             const okCount = statOf('subStats').get(subject)?.get(`${group}|${sub2}`) ?? null;
             const r = practice.get(`
-              SELECT COUNT(*) c FROM question_categories qc
+              SELECT COUNT(DISTINCT qc.question_id) c FROM question_categories qc
+              JOIN questions q ON q.questionId = qc.question_id
+              JOIN papers p ON p.id = q.paperId AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}'
               WHERE qc.category = ? AND qc.sub = ? AND qc.subject = ?
-                AND EXISTS (SELECT 1 FROM questions q WHERE q.questionId = qc.question_id)
             `, group, sub2, subject);
             return { total: r?.c || 0, done: okCount ?? null, rate: null };
           }

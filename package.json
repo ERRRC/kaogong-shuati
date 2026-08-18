@@ -1,20 +1,23 @@
-{
-  "name": "fenbi-crawler",
-  "version": "0.1.0",
-  "private": true,
-  "type": "module",
-  "description": "粉笔题库爬虫骨架（登录 + 拉试卷/题目，个人自用验证用）",
-  "engines": {
-    "node": ">=18"
-  },
-  "scripts": {
-    "start": "node crawl.js",
-    "dry-run": "node crawl.js --dry-run",
-    "test:encrypt": "node lib/encrypt.js --self-test",
-    "test": "node verify-db.mjs && node e2e-check.mjs",
-    "test:local": "node --test test-local-api.mjs test-local-queries.mjs test-random-practice-count.mjs test-local-ai.mjs test-local-handler.mjs test-local-fixes.mjs test-native-engine.mjs"
-  },
-  "dependencies": {
-    "sharp": "^0.35.3"
-  }
+﻿{
+    "name":  "fenbi-crawler",
+    "version":  "0.1.0",
+    "private":  true,
+    "type":  "module",
+    "description":  "粉笔题库爬虫骨架（登录 + 拉试卷/题目，个人自用验证用）",
+    "engines":  {
+                    "node":  "\u003e=18"
+                },
+    "scripts":  {
+                    "start":  "node crawl.js",
+                    "dry-run":  "node crawl.js --dry-run",
+                    "test:encrypt":  "node lib/encrypt.js --self-test",
+                    "test":  "node verify-db.mjs \u0026\u0026 node e2e-check.mjs",
+                    "test:local":  "node --test test-local-api.mjs test-local-queries.mjs test-random-practice-count.mjs test-local-ai.mjs test-local-handler.mjs test-local-fixes.mjs test-native-engine.mjs test-custom-practice.mjs test-custom-practice-e2e.mjs test-user-skills.mjs"
+                },
+    "dependencies":  {
+                         "sharp":  "^0.35.3"
+                     },
+    "devDependencies":  {
+                            "playwright-core":  "^1.62.1"
+                        }
 }

@@ -1,6 +1,6 @@
 # 性能优化报告（2026-08-11）— 各模块打开慢的诊断与修复
 
-> 生成时间：2026-08-11 · 工作区：`C:\Users\28692\AppData\Roaming\reasonix\global-workspace\fenbi-crawler\`
+> 生成时间：2026-08-11 · 工作区：`D:\nomoneynowork\`（2026-08-16 从 C 盘迁移）
 > 阅读对象：**其他模块的工作 AI / 后续维护者**。本文说明本次性能问题"为什么慢、改了什么、哪些红线不能碰、怎么验证"。
 > 相关文档：`HANDOFF.md`（App 离线化交接）、`app-mobile-plan.md`（主计划）
 
@@ -132,7 +132,7 @@ WHERE qc.subject = ? AND EXISTS (
 ## 6. 验证方法（复测 / 回归）
 
 ```powershell
-cd C:\Users\28692\AppData\Roaming\reasonix\global-workspace\fenbi-crawler
+cd D:\nomoneynowork
 node --check server.mjs            # 语法校验（零依赖 node:sqlite）
 node server.mjs 3000               # 启动（或双击 启动.bat）
 # 用浏览器或脚本请求以下端点观察耗时：

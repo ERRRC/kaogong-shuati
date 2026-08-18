@@ -18,7 +18,12 @@ before(async () => {
     srv.on('error', reject);
   });
   server = spawn(process.execPath, ['server.mjs', String(PORT)], { stdio: 'ignore' });
-  await new Promise((r) => setTimeout(r, 1500));
+  // 轮询等待服务就绪（替代固定 sleep，避免并发跑多个 server 时启动慢导致误报）
+  const deadline = Date.now() + 20000;
+  while (Date.now() < deadline) {
+    try { const r = await fetch(`http://localhost:${PORT}/`); if (r.ok) break; } catch {}
+    await new Promise((r) => setTimeout(r, 200));
+  }
   base = `http://localhost:${PORT}`;
 });
 
@@ -27,7 +32,10 @@ after(() => { server?.kill(); });
 const enc = encodeURIComponent;
 async function count(path) {
   const res = await fetch(base + path);
-  assert.equal(res.status, 200, `请求失败: ${path} -> ${res.status}`);
+  if (!res.ok) {
+    const body = await res.text().catch(() => '');
+    throw new Error(`请求失败: ${path} -> ${res.status} body=${body.slice(0, 400)}`);
+  }
   const data = await res.json();
   return Array.isArray(data) ? data.length : 0;
 }
@@ -55,7 +63,7 @@ test('行测·数量关系（非材料模块）固定 15 题', () => assertExact
 test('行测·常识判断（非材料模块）固定 15 题（不误判为材料模块）', () => assertExact(`/api/practice?subject=${XC}&group=${enc('常识判断')}&sub=${enc('全部')}&n=15`, 15));
 test('行测·政治理论（非材料模块）固定 15 题', () => assertExact(`/api/practice?subject=${XC}&group=${enc('政治理论')}&sub=${enc('全部')}&n=15`, 15));
 test('行测·全科目随机固定 15 题', () => assertExact(`/api/practice?subject=${XC}&n=15`, 15));
-test('行测·chapters 路径（材料模块）15-20 题', () => assertRange(`/api/practice?subject=${XC}&chapters=${enc('逻辑填空,片段阅读,语句表达')}&n=15`, 15, 20));
+test('行测·chapters 路径（材料模块）15-20 题', () => assertRange(`/api/practice?subject=${XC}&chapters=${enc('言语理解与表达,判断推理')}&n=15`, 15, 20));
 test('行测·chapters 路径（非材料模块）固定 15 题', () => assertExact(`/api/practice?subject=${XC}&chapters=${enc('数学运算')}&n=15`, 15));
 test('职测·言语理解与表达（材料模块）15-20 题', () => assertRange(`/api/practice?subject=${ZC}&group=${enc('言语理解与表达')}&sub=${enc('全部')}&n=15`, 15, 20));
 test('职测·资料分析（材料模块）15-20 题', () => assertRange(`/api/practice?subject=${ZC}&group=${enc('资料分析')}&sub=${enc('全部')}&n=15`, 15, 20));

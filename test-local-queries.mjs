@@ -74,7 +74,9 @@ const chXc = api.chapters('公务员·行测');
 ok('chapters 行测树', Array.isArray(chXc) && chXc.length > 0, `(${chXc.length} 组)`);
 ok('chapters 行测结构', chXc.every((g) => 'group' in g && 'total' in g && 'subs' in g), JSON.stringify(chXc.map((g) => g.group)));
 const xcTotal = chXc.reduce((s, g) => s + g.total, 0);
-ok('chapters 行测题量一致', xcTotal > 30000 && xcTotal <= 60000, `总题 ${xcTotal}`);
+// 口径一致性：章节树总题量 = 主界面题数（同一题跨卷出现只算一次，2026-08-17 修复 COUNT 未去重 bug）
+const subXcQ = subs.find((s) => s.subjectName === '公务员·行测').questions;
+ok('chapters 行测题量一致', xcTotal === subXcQ, `章节树 ${xcTotal} vs 主界面 ${subXcQ}`);
 const chSl = api.chapters('公务员·申论');
 ok('chapters 申论树', chSl.length > 0, JSON.stringify(chSl.map((g) => g.group)));
 const chZy = api.chapters('事业编·综应');

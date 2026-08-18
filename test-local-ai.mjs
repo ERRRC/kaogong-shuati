@@ -129,13 +129,19 @@ test('本地 AI：skill 注入内容进入 AI 请求 system 消息', async () =>
 test('本地 AI：api_key 空值/脱敏占位不覆盖旧值', async () => {
   const { createAiApi } = await import('./public/ai-local.js');
   const ai = await createAiApi({ request: makeRequest(), tiku, query: null });
-  await ai.updateAgent(2, { api_key: 'sk-real-789' });
+  // getAgent 恒脱敏（api_key: '' + api_key_masked），持久化 key 用 updateAgent 返回值验证
+  const r1 = await ai.updateAgent(2, { api_key: 'sk-real-789' });
+  assert.equal(r1.agent.api_key, 'sk-real-789', '真实 key 正常保存');
   await ai.updateAgent(2, { api_key: 'sk-****' });   // 脱敏占位
-  assert.equal((await ai.getAgent(2)).api_key, 'sk-real-789', 'sk-**** 不覆盖');
+  const r2 = await ai.updateAgent(2, { enabled: 1 });
+  assert.equal(r2.agent.api_key, 'sk-real-789', 'sk-**** 不覆盖');
   await ai.updateAgent(2, { api_key: '' });          // 空串
-  assert.equal((await ai.getAgent(2)).api_key, 'sk-real-789', '空串不覆盖');
+  const r3 = await ai.updateAgent(2, { enabled: 1 });
+  assert.equal(r3.agent.api_key, 'sk-real-789', '空串不覆盖');
   await ai.updateAgent(2, { api_key: 'sk-new-000' }); // 真实新值
-  assert.equal((await ai.getAgent(2)).api_key, 'sk-new-000', '真实值正常覆盖');
+  const r4 = await ai.updateAgent(2, { enabled: 1 });
+  assert.equal(r4.agent.api_key, 'sk-new-000', '真实值正常覆盖');
+  assert.equal((await ai.getAgent(2)).api_key_masked, 'sk-****', 'getAgent 脱敏展示');
 });
 
 test('本地 AI：未配置 key → 可读降级提示', async () => {

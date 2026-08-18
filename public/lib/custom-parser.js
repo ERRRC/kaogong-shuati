@@ -292,8 +292,8 @@ export async function docxToText(file) {
     .trim();
 }
 
-/** 极简 zip 中央目录解析（仅支持 store/deflate，用于 docx；失败抛错） */
-async function zipEntries(buf) {
+/** 极简 zip 中央目录解析（仅支持 store/deflate，用于 docx/技能包；失败抛错） */
+export async function zipEntries(buf) {
   // 找 EOCD
   let eocd = -1;
   for (let i = buf.length - 22; i >= 0; i--) {
@@ -331,7 +331,7 @@ async function zipEntries(buf) {
 }
 
 /** deflate-raw 解压（浏览器/WebView 均有 DecompressionStream） */
-async function inflateRaw(uint8) {
+export async function inflateRaw(uint8) {
   const ds = new DecompressionStream('deflate-raw');
   const stream = new Blob([uint8]).stream().pipeThrough(ds);
   const out = new Uint8Array(await new Response(stream).arrayBuffer());

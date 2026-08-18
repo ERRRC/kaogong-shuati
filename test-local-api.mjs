@@ -8,7 +8,7 @@ const engine = { get: (s, ...p) => db.prepare(s).get(...p), all: (s, ...p) => db
 const imgEngine = { get: (s, ...p) => imgDb.prepare(s).get(...p) };
 
 // 内存 store（模拟 IndexedDB 适配器接口）
-const mem = { records: [], favorites: [] };
+const mem = { records: [], favorites: [], custom_questions: [] };
 const store = {
   async getAll(kind) { return mem[kind].map((r) => ({ ...r })); },
   async put(kind, row) {
