@@ -55,3 +55,5 @@ ai-config.db
 parsed/
 pdf-src/
 pdf-work/
+solutions-progress.json
+backup-placeholder-questions.json

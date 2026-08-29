@@ -204,3 +204,16 @@ questions  题目：questionId / paperId / chapter / type / content / options(JS
 - 接口逻辑：https://github.com/dduutt/fenbi
 - 申论/综应题库数据（Markdown，4886 题，可直接下载）：https://github.com/2421873411a-rgb/gongkao-tiku
 
+## 第三方开源组件致谢
+
+本仓库 `ref-skills/` 目录包含以下开源考公技能项目的完整副本（仅作本地学习与 AI 方法论注入参考），版权归原作者所有，本项目非商用：
+
+| 项目 | 许可证 | 用途 |
+|---|---|---|
+| [shenlun-review-pro](https://github.com/liuyuexi1987/shenlun-review-pro) | GPL-3.0（副本内附 LICENSE 原文） | 申论批改/复盘方法论 |
+| Shenlun.skill | MIT | 申论备考训练 |
+| huasheng13-skill（作者 [WangJunqing-coder](https://github.com/WangJunqing-coder)） | MIT | 行测速算与解题方法论 |
+| daily-gongkao-skill | 上游未声明许可证，版权归原作者所有 | 公考日常学习参考 |
+
+说明：技能内容运行时从本地技能库加载（`ai-config.db` 的 user_skills 表），`ref-skills/` 仅为上游参考副本，软件功能不依赖该目录存在。`public/vendor/` 为开源库本地分发包：pdf.js（Apache-2.0）、SheetJS（Apache-2.0）、sql.js（MIT）。如上游作者对再分发有异议，请提 issue 联系移除。
+
