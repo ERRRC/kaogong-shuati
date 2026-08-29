@@ -46,3 +46,12 @@ ai-config.db
 *.jks
 *.p12
 *.keystore
+.env
+.env.*
+
+# ===== 本地工具状态 / 数据目录（不上传）=====
+.workbuddy/
+.zcode/
+parsed/
+pdf-src/
+pdf-work/
