@@ -33,7 +33,7 @@
 
 - 首次运行自动建表；AI 功能需在「AI 设置」页（`http://localhost:3000/?view=ai`）配置 base_url + api_key（DeepSeek/通义/GLM/OpenAI/本地 Ollama 等 OpenAI 兼容网关均可，测试按钮可先试跑）
 - 数据文件：`tiku.db`（只读题库）、`practice.db`（做题记录）、`ai-config.db`（AI 配置）均为本地生成，已加入 .gitignore
-- Android 打包：`app/` 为 Capacitor 工程，构建说明见 `docs/`
+- Android 打包：`app/` 为 Capacitor 工程，完整构建步骤见 [`BUILD_MANUAL.md`](BUILD_MANUAL.md)（含第三方构建者的 Debug 包路线）
 
 ## 目录结构
 
