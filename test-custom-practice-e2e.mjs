@@ -117,8 +117,8 @@ test('e2e 默认做题模式：设置面板默认值 → 模块刷题点选自�
   await page.goto(`http://localhost:${PORT}`);
   await page.getByText('公务员·行测', { exact: true }).first().waitFor({ timeout: 10000 });
   await openPanel();
-  // 上一用例保存了背题模式 → 改回做题模式；年份/难度恢复默认
-  await page.getByText('做题模式', { exact: true }).click();
+  // 上一用例保存了背题模式 → 改回刷题模式；年份/难度恢复默认
+  await page.getByText('刷题模式', { exact: true }).click();
   await page.getByText('不限', { exact: true }).click();
   await page.getByText('随机', { exact: true }).click();
   await page.getByRole('button', { name: '确定' }).click();

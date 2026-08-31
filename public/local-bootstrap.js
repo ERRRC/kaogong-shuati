@@ -20,9 +20,15 @@ if (isLocalMode()) {
   // 首启防白屏：显示"正在准备题库"遮罩（题库复制/解压期间 WebView 可能长时间无内容）
   const splash = document.getElementById('boot-splash');
   if (splash) splash.style.display = 'flex';
+  const setBootProgress = function (pct) {
+    const bar = document.getElementById('boot-splash-bar');
+    if (bar) bar.style.width = pct + '%';
+  };
+  setBootProgress(8);
   window.__LOCAL_API_PROMISE__ = (async function () {
     // ---------- 1. 题库引擎：原生 SQLite 同步桥优先（Capacitor App 主路径，内存友好），sql.js 兜底（浏览器联调） ----------
     const engine = await import('./sqljs-engine.js');
+    setBootProgress(20);
     let tiku = null;
     let nativeMode = false;
     if (window.NativeDB) {
@@ -55,6 +61,7 @@ if (isLocalMode()) {
     }
 
     // ---------- 2. 本地 API + 记录存储 ----------
+    setBootProgress(60);
     const { initLocalApiBrowser } = await import('./local-api.js');
     // 原生桥按 SQL 内容自动路由 tiku_app.db / images.db，可直接复用为图片引擎（公式图可用）
     const api = await initLocalApiBrowser({ tiku, images: nativeMode ? tiku : null });
@@ -67,6 +74,7 @@ if (isLocalMode()) {
     }
 
     // ---------- 3. AI（直调 OpenAI 兼容接口） ----------
+    setBootProgress(82);
     const { createAiApi } = await import('./ai-local.js');
     // request 注入：浏览器 fetch；Capacitor 里用 CapacitorHttp 规避 CORS
     let request;
@@ -113,6 +121,7 @@ if (isLocalMode()) {
     window.__LOCAL_STORE__ = api.store;
 
     // ---------- 5. 图片离线 Service Worker ----------
+    setBootProgress(96);
     if ('serviceWorker' in navigator) {
       navigator.serviceWorker.register('./sw-local.js', { scope: './' }).catch(function (e) {
         console.warn('SW 注册失败（图片离线不可用）：', e.message);
