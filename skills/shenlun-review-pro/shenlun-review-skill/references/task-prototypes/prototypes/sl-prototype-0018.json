@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0018",
+  "name": "辩证转化立意",
+  "question_type": "申发论述",
+  "trigger_signals": ["劣势转优势", "转化", "辩证", "流动*新生", "融和*融活"],
+  "exclusion_signals": ["多词并列", "关键词"],
+  "required_task_elements": ["矛盾双方", "材料来源范围", "字数限制"],
+  "optional_task_elements": ["转化条件"],
+  "default_format_reference": "标题+开头（承认矛盾）+分论点（转化路径）+结尾",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构", "论证"],
+  "recommended_card_ids": ["sl-card-0046", "sl-card-0081"],
+  "mode_routes": {
+    "审题": ["sl-card-0046"],
+    "解析": ["sl-card-0081", "sl-card-0049"],
+    "批改": ["sl-card-0055"],
+    "修改二稿": ["sl-card-0069"]
+  },
+  "fallback_behavior": "未命中原型时回退到申发论述通用路由",
+  "constraints": ["立意必须体现转化", "不得写成单边口号"],
+  "evidence_refs": ["national-exam-2025-sub-provincial-q5"]
+}

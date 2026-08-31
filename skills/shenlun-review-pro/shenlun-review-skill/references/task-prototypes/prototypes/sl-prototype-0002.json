@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0002",
+  "name": "变化概括",
+  "question_type": "归纳概括",
+  "trigger_signals": ["概括变化", "前后对比", "有哪些变化"],
+  "exclusion_signals": ["概括做法", "梳理问题"],
+  "required_task_elements": ["变化主体", "时间范围", "材料来源范围"],
+  "optional_task_elements": ["变化维度"],
+  "default_format_reference": "分条列点，每条含变化前+变化后",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构"],
+  "recommended_card_ids": ["sl-card-0001", "sl-card-0005"],
+  "mode_routes": {
+    "审题": ["sl-card-0001"],
+    "解析": ["sl-card-0001", "sl-card-0005"],
+    "批改": ["sl-card-0009"],
+    "修改二稿": ["sl-card-0008"]
+  },
+  "fallback_behavior": "未命中原型时回退到归纳概括通用路由",
+  "constraints": ["得分点只能来自材料", "必须体现前后对比"],
+  "evidence_refs": ["national-exam-2021-municipal-q1"]
+}

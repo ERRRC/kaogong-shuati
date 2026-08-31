@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0003",
+  "name": "分类总结",
+  "question_type": "归纳概括",
+  "trigger_signals": ["分类归纳", "归纳分类", "进行分类", "加以归类"],
+  "exclusion_signals": ["概括做法", "概括变化"],
+  "required_task_elements": ["分类对象", "分类标准", "材料来源范围"],
+  "optional_task_elements": ["类别数量要求"],
+  "default_format_reference": "按类别分组，每组含类别名+要点",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构"],
+  "recommended_card_ids": ["sl-card-0001", "sl-card-0006"],
+  "mode_routes": {
+    "审题": ["sl-card-0001"],
+    "解析": ["sl-card-0001", "sl-card-0006"],
+    "批改": ["sl-card-0009"],
+    "修改二稿": ["sl-card-0008"]
+  },
+  "fallback_behavior": "未命中原型时回退到归纳概括通用路由",
+  "constraints": ["分类标准必须合理", "类别不得重叠"],
+  "evidence_refs": ["summary-exercise-1-f-city"]
+}

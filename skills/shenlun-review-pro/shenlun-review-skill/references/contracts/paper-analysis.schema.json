@@ -1,0 +1,78 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "PaperAnalysis",
+  "description": "Complete analysis of a national exam shenlun paper, including all materials and questions.",
+  "type": "object",
+  "required": ["schema_version", "paper_id", "title", "source_hash", "material_sections", "questions", "task_specs", "completeness"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "paper_id": { "type": "string", "minLength": 1, "description": "Unique paper identifier (e.g. paper-2021-national-subprovincial)" },
+    "title": { "type": "string", "minLength": 1, "description": "Full paper title" },
+    "source_file": { "type": "string", "description": "Source PDF filename" },
+    "source_hash": { "type": "string", "minLength": 1, "description": "SHA-256 hash of the source material text" },
+    "material_sections": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["section_id", "paragraph_count", "summary"],
+        "properties": {
+          "section_id": { "type": "string", "minLength": 1, "description": "Material section ID (e.g. material-1)" },
+          "title": { "type": ["string", "null"], "description": "Section title if present" },
+          "paragraph_count": { "type": "integer", "minimum": 1 },
+          "word_count": { "type": ["integer", "null"] },
+          "summary": { "type": "string", "minLength": 1, "description": "Brief summary of section content (1-2 sentences)" },
+          "page_range": {
+            "type": "object",
+            "properties": {
+              "start": { "type": ["integer", "null"] },
+              "end": { "type": ["integer", "null"] }
+            }
+          }
+        }
+      },
+      "description": "Material sections with metadata. Full text NOT stored here."
+    },
+    "questions": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 10,
+      "items": {
+        "type": "object",
+        "required": ["question_id", "question_type", "material_scope"],
+        "properties": {
+          "question_id": { "type": "string", "minLength": 1 },
+          "question_type": {
+            "type": "string",
+            "enum": ["归纳概括", "综合分析", "提出对策", "贯彻执行", "申发论述"]
+          },
+          "material_scope": { "type": "array", "items": { "type": "string" } },
+          "is_essay": { "type": "boolean", "default": false },
+          "essay_material_scope": { "type": "string", "description": "For essay questions: material range as stated (e.g. 材料1–4)" }
+        }
+      },
+      "description": "Question metadata. Must match task_specs 1:1."
+    },
+    "task_specs": {
+      "type": "array",
+      "minItems": 1,
+      "items": { "type": "string", "description": "task_id reference" },
+      "description": "Ordered list of task_ids belonging to this paper"
+    },
+    "question_analysis_ids": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Ordered list of analysis_ids for each question"
+    },
+    "completeness": {
+      "type": "object",
+      "required": ["status", "question_count", "issues"],
+      "properties": {
+        "status": { "type": "string", "enum": ["complete", "incomplete", "uncertain"] },
+        "question_count": { "type": "integer" },
+        "issues": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "issues": { "type": "array", "items": { "type": "string" } }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0014",
+  "name": "谈话提纲",
+  "question_type": "贯彻执行",
+  "trigger_signals": ["谈话提纲", "反馈提纲"],
+  "exclusion_signals": ["讲话稿", "情况报告", "短评"],
+  "required_task_elements": ["谈话身份", "谈话对象", "谈话目的", "材料来源范围", "字数限制"],
+  "optional_task_elements": ["谈话场景"],
+  "default_format_reference": "标题+正文（成效/问题/建议等组件按题面选择）",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构", "表达"],
+  "recommended_card_ids": ["sl-card-0036", "sl-card-0037", "sl-card-0079"],
+  "mode_routes": {
+    "审题": ["sl-card-0036"],
+    "解析": ["sl-card-0036", "sl-card-0037", "sl-card-0079"],
+    "批改": ["sl-card-0067"],
+    "修改二稿": ["sl-card-0068"]
+  },
+  "fallback_behavior": "未命中原型时回退到贯彻执行通用路由",
+  "constraints": ["谈话提纲不等于讲话稿", "语气必须适合对象", "不得固定为成效—问题—建议三段"],
+  "evidence_refs": ["national-exam-2025-enforcement-q4"]
+}

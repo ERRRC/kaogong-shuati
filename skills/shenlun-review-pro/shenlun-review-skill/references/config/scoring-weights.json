@@ -1,0 +1,146 @@
+{
+  "schema_version": "1.0",
+  "description": "v0.5: Dimension weights are for OUTPUT DISPLAY ONLY, not for scoring. Score is computed by point-level scoring + anchor table. These weights are used to show dimension grades (e.g. '组织表达：良好') in user-facing output.",
+  "question_types": {
+    "归纳概括": {
+      "dimensions": [
+        {
+          "name": "任务符合",
+          "weight": 15
+        },
+        {
+          "name": "要点覆盖",
+          "weight": 45
+        },
+        {
+          "name": "准确有据",
+          "weight": 20
+        },
+        {
+          "name": "分类组织",
+          "weight": 10
+        },
+        {
+          "name": "简洁表达",
+          "weight": 10
+        }
+      ]
+    },
+    "综合分析": {
+      "dimensions": [
+        {
+          "name": "任务符合",
+          "weight": 10
+        },
+        {
+          "name": "要点覆盖",
+          "weight": 30
+        },
+        {
+          "name": "关系逻辑",
+          "weight": 30
+        },
+        {
+          "name": "结论解释",
+          "weight": 15
+        },
+        {
+          "name": "组织表达",
+          "weight": 15
+        }
+      ]
+    },
+    "提出对策": {
+      "dimensions": [
+        {
+          "name": "任务符合",
+          "weight": 10
+        },
+        {
+          "name": "问题诊断",
+          "weight": 20
+        },
+        {
+          "name": "针对匹配",
+          "weight": 30
+        },
+        {
+          "name": "可行具体",
+          "weight": 25
+        },
+        {
+          "name": "组织表达",
+          "weight": 15
+        }
+      ]
+    },
+    "贯彻执行": {
+      "dimensions": [
+        {
+          "name": "身份文种格式",
+          "weight": 20
+        },
+        {
+          "name": "结构",
+          "weight": 30
+        },
+        {
+          "name": "内容覆盖",
+          "weight": 20
+        },
+        {
+          "name": "目的场景",
+          "weight": 20
+        },
+        {
+          "name": "语言语气",
+          "weight": 10
+        }
+      ]
+    },
+    "申发论述": {
+      "dimensions": [
+        {
+          "name": "立意扣题",
+          "weight": 20
+        },
+        {
+          "name": "材料运用",
+          "weight": 15
+        },
+        {
+          "name": "论证深度",
+          "weight": 25
+        },
+        {
+          "name": "结构",
+          "weight": 15
+        },
+        {
+          "name": "论据例证",
+          "weight": 10
+        },
+        {
+          "name": "语言",
+          "weight": 15
+        }
+      ]
+    }
+  },
+  "confidence_intervals": {
+    "high": {
+      "half_width_percent": 5
+    },
+    "medium": {
+      "half_width_percent": 10
+    },
+    "low": {
+      "half_width_percent": 15
+    }
+  },
+  "center_value_rounding": {
+    "method": "round_half_up",
+    "precision": 0.5,
+    "formula": "round_half_up(diagnostic_total * 2) / 2"
+  }
+}

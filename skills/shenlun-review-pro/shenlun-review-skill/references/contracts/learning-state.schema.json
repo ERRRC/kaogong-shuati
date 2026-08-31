@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Shenlun Learning State Read Model",
+  "type": "object",
+  "required": ["schema_version", "issue_cards", "ability_profiles", "learner_profile"],
+  "properties": {
+    "schema_version": {"const": "1.0"},
+    "issue_cards": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["issue_card_id", "answer_id", "score_id", "task_id", "question_type", "issue_source", "issue_type", "material_evidence", "user_quote", "loss_reason", "primary_dimension", "modification_action", "draft_status"],
+        "properties": {
+          "issue_card_id": {"type": "string", "pattern": "^issue-[0-9a-f]{16}$"},
+          "answer_id": {"type": "string", "minLength": 1},
+          "score_id": {"type": "string", "minLength": 1},
+          "task_id": {"type": "string", "minLength": 1},
+          "question_type": {"enum": ["归纳概括", "综合分析", "提出对策", "贯彻执行", "申发论述"]},
+          "issue_source": {"enum": ["point_ledger", "structure_ledger"]},
+          "issue_type": {"type": "string", "minLength": 1},
+          "material_evidence": {"type": "string"},
+          "user_quote": {"type": "string"},
+          "loss_reason": {"type": "string"},
+          "primary_dimension": {"type": "string"},
+          "modification_action": {"type": "string"},
+          "draft_status": {"enum": ["未比较", "未改善", "部分改善", "已改善", "退步", "表面换词"]}
+        }
+      }
+    },
+    "ability_profiles": {"type": "array"},
+    "learner_profile": {
+      "type": "object",
+      "required": ["generated_at", "answer_count", "score_count", "sample_limited", "strengths", "priority_improvements", "refresh_recommended"]
+    }
+  }
+}

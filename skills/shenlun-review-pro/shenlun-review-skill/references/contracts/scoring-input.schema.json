@@ -1,0 +1,260 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "Scoring Input",
+  "description": "Development scoring-core contract. Ordinary user grading must enter through grade-once, which compiles and validates this object internally. source_note must be string or null.",
+  "type": "object",
+  "required": ["schema_version", "analysis_id", "question_type", "weight_policy", "user_answer", "answer_version", "confidence_basis", "dimensions"],
+  "allOf": [
+    {
+      "if": {
+        "properties": {"compatibility_mode": {"const": "legacy"}},
+        "required": ["compatibility_mode"]
+      },
+      "then": {},
+      "else": {
+        "required": ["point_definitions"]
+      }
+    }
+  ],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "analysis_id": { "type": "string", "minLength": 1 },
+    "question_type": { "type": "string", "enum": ["归纳概括", "综合分析", "提出对策", "贯彻执行", "申发论述"] },
+    "weight_policy": { "type": "string", "enum": ["default", "official_override"] },
+    "source_note": { "type": ["string", "null"], "description": "Must be string or null. Numbers, booleans, objects, arrays are rejected." },
+    "user_answer": { "type": "string", "minLength": 1 },
+    "answer_version": { "type": "string", "enum": ["draft_1", "draft_2", "revision"] },
+    "full_score": { "type": ["number", "null"], "exclusiveMinimum": 0, "description": "Null or a finite positive number. 0, negatives, strings, bool are rejected." },
+    "confidence_basis": {
+      "type": "object",
+      "required": ["level", "reason"],
+      "properties": {
+        "level": { "type": "string", "enum": ["high", "medium", "low"] },
+        "reason": { "type": "string", "minLength": 1 }
+      }
+    },
+    "dimensions": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "object",
+        "required": ["dimension_name", "weight", "level"],
+        "properties": {
+          "dimension_name": { "type": "string", "minLength": 1 },
+          "weight": { "type": "number", "minimum": 0 },
+          "level": { "type": "integer", "minimum": 0, "maximum": 4 },
+          "anchor_evidence": { "type": "string", "description": "Optional. 可观察证据支撑当前层级判断。每个维度至少1条。" },
+          "upgrade_condition": { "type": "string", "description": "Optional. 层级1/2/3必填；升入上一档仍缺少的条件。" },
+          "borderline_decision": {
+            "type": ["object", "null"],
+            "description": "Optional. 临界档必填。记录当前档、目标档、裁决依据、是否取低档。",
+            "properties": {
+              "current_level": { "type": "integer", "minimum": 0, "maximum": 4 },
+              "target_level": { "type": "integer", "minimum": 0, "maximum": 4 },
+              "took_lower": { "type": "boolean" },
+              "rationale": { "type": "string", "minLength": 1 }
+            }
+          }
+        }
+      }
+    },
+    "score_ledger": {
+      "type": "object",
+      "description": "Required for formal scoring. grade-once compiles and validates it in-process. Development callers of calculate-score receive the same canonical re-validation; ordinary user grading must not call a separate validate-score-ledger step."
+    },
+    "task_spec": {
+      "type": "object",
+      "description": "TaskSpec containing question metadata. Required for formal ledger context."
+    },
+    "material_text_by_scope": {
+      "type": "object",
+      "description": "Material text keyed by scope (paragraph_id). Required evidence source."
+    },
+    "compatibility_mode": {
+      "type": "string",
+      "enum": [null, "legacy"],
+      "description": "Explicit opt-in for legacy mode. When set to 'legacy', formal scoring is disabled (formal_score=false, legacy_mode=true). When absent or null, formal mode is enforced — missing/empty point_definitions causes fail-closed (exit non-zero)."
+    },
+    "point_definitions": {
+      "type": "array",
+      "minItems": 1,
+      "description": "Point metadata required for v0.3+ formal scoring. Each entry provides point_id, status, independent_scoring, and required_or_optional. In formal mode, missing, null, empty, or zero-scorable-point point_definitions causes fail-closed (exit non-zero). Legacy mode requires explicit compatibility_mode='legacy'.",
+      "items": {
+        "type": "object",
+        "required": ["point_id", "status", "independent_scoring", "required_or_optional"],
+        "properties": {
+          "point_id": { "type": "string", "minLength": 1 },
+          "status": { "type": "string", "enum": ["active", "merged", "excluded"] },
+          "independent_scoring": { "type": "boolean" },
+          "required_or_optional": { "type": "string", "enum": ["required", "optional"] },
+          "point_value": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "逐点计分模式下该点的满分值。有值时启用逐点计分；null或缺失时fallback到维度等级制。"
+          },
+          "importance": {
+            "type": "string",
+            "enum": ["core", "secondary", "potential"],
+            "description": "该点在材料中的重要性。core=核心得分点（必须重点展开），secondary=次要支撑点，potential=可选补充。"
+          },
+          "parent_point_id": {
+            "type": ["string", "null"],
+            "description": "父要点ID。用于'大点+解释'结构：子解释指向其所属大点。大点覆盖时子解释从宽判定。"
+          },
+          "critical_qualifiers": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "关键限定/落地动作。仅当缺失会改变该点是否完整覆盖时填写。"
+          }
+        }
+      }
+    },
+    "point_mappings": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["point_id", "coverage_status"],
+        "properties": {
+          "point_id": { "type": "string", "minLength": 1 },
+          "coverage_status": { "type": "string", "enum": ["完整覆盖", "部分覆盖", "等义表达", "未覆盖", "超出材料"] },
+          "user_quote": { "type": ["string", "null"] }
+          ,"qualifier_status": { "type": ["string", "null"], "enum": ["complete", "partial", "missing", null] }
+          ,"missing_qualifiers": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "length_check": {
+      "type": "object",
+      "description": "Optional deterministic word-count gate. When present, engine verifies user_answer actual length falls within [min_length, max_length] and reports compliance. 超限/不足 must be flagged and must affect任务符合/简洁表达/结构/题型协议规定维度; 不得把不合字数答案评完全合规。",
+      "properties": {
+        "min_length": { "type": ["integer", "null"] },
+        "max_length": { "type": ["integer", "null"] },
+        "length_unit": { "type": "string", "enum": ["字", "字符"] }
+      }
+    },
+    "required_format_elements": {
+      "type": "array",
+      "description": "Required format elements复用自审题. 批改只允许对缺失的必需要素扣身份文种格式分. 审题与批改必须一致; 不一致则校验失败.",
+      "items": { "type": "string", "enum": ["标题", "称谓", "发文对象", "正文结构", "落款", "署名", "日期"] }
+    },
+    "missing_format_elements": {
+      "type": "array",
+      "description": "Actually missing required format elements in user_answer (subset of required_format_elements). Only these may扣格式分.",
+      "items": { "type": "string", "enum": ["标题", "称谓", "发文对象", "正文结构", "落款", "署名", "日期"] }
+    },
+    "reference_answer_set": {
+      "$ref": "reference-answer-set.schema.json",
+      "description": "可选参考答案集。有值时走材料点池+参考答案校准；无值时走材料独立点池+反向复核。"
+    },
+    "point_pool_review": {
+      "type": "object",
+      "description": "得分点池反向复核回执。正式逐点计分必须提供。",
+      "required": ["status", "evidence"],
+      "properties": {
+        "status": { "type": "string", "enum": ["verified", "disputed"] },
+        "dispute_ids": { "type": "array", "items": { "type": "string" } },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "method_selection": {
+      "type": "object",
+      "description": "方法卡选择与校验回执。正式逐点计分必须提供。",
+      "required": ["selected_card_ids", "validation_passed"],
+      "properties": {
+        "selected_card_ids": { "type": "array", "items": { "type": "string" } },
+        "validation_passed": { "type": "boolean" },
+        "mode": { "type": "string" }
+      }
+    },
+    "essay_review": {
+      "type": "object",
+      "description": "申发论述专用整体审核回执。用于识别论证线与反套路风险，不按小题逐点计分。",
+      "required": ["central_thesis", "sub_argument_chain", "relationship_type", "prompt_relation_required", "relationship_centrality", "relationship_coverage_status", "thesis_scope_status", "sub_argument_system_status", "material_transformation_status", "material_support", "reasoning_bridge", "counterargument_or_boundary", "return_to_thesis", "topic_specificity", "argument_line_status", "material_support_status", "template_risk", "judgment_evidence", "evidence"],
+      "properties": {
+        "central_thesis": { "type": "string", "minLength": 1 },
+        "sub_argument_chain": { "type": "array", "minItems": 2, "items": { "type": "string", "minLength": 1 } },
+        "relationship_type": { "type": "string", "minLength": 1 },
+        "prompt_relation_required": { "type": "boolean", "description": "题干是否要求处理两个或多个概念之间的关系。" },
+        "relationship_centrality": { "type": "string", "enum": ["core", "supporting", "not_applicable"], "description": "关系是题目核心命题、辅助线索，还是不适用。" },
+        "relationship_coverage_status": { "type": "string", "enum": ["complete", "partial", "mentioned_only", "missing", "distorted", "not_applicable"], "description": "关系双方及其连接是否被完整、准确处理；mentioned_only表示仅在标题或开头提及，主体未展开。" },
+        "thesis_scope_status": { "type": "string", "enum": ["accurate", "narrowed", "off_topic"], "description": "中心立意是否缩题或偏题。" },
+        "sub_argument_system_status": { "type": "string", "enum": ["sound", "mixed_levels", "material_parallel", "broken"], "description": "分论点是否同层、有关系并共同支撑总论点。" },
+        "material_transformation_status": { "type": "string", "enum": ["transformed", "mixed", "mechanical"], "description": "材料是否经分析转化为论据，而非机械拼贴。" },
+        "judgment_evidence": {
+          "type": "object",
+          "description": "关键定档标签的原文证据。题干证据来自题目，其他引文来自考生作文。",
+          "required": ["prompt_relation_quote", "relationship_centrality_rationale", "central_thesis_quote", "side_a_quote", "side_b_quote", "relationship_bridge_quote", "scope_rationale", "sub_argument_audit", "material_transformation_quote"],
+          "properties": {
+            "prompt_relation_quote": { "type": ["string", "null"] },
+            "relationship_centrality_rationale": { "type": "string", "minLength": 1 },
+            "central_thesis_quote": { "type": "string", "minLength": 1 },
+            "side_a_quote": { "type": ["string", "null"] },
+            "side_b_quote": { "type": ["string", "null"] },
+            "relationship_bridge_quote": { "type": ["string", "null"] },
+            "scope_rationale": { "type": "string", "minLength": 1 },
+            "sub_argument_audit": {
+              "type": "array",
+              "minItems": 2,
+              "items": {
+                "type": "object",
+                  "required": ["argument_quote", "logical_level", "supports_thesis", "source_role", "develops_side_a", "develops_side_b", "explains_relationship", "evidence"],
+                "properties": {
+                  "argument_quote": { "type": "string", "minLength": 1 },
+                  "logical_level": { "type": "string", "minLength": 1 },
+                  "supports_thesis": { "type": "boolean" },
+                  "source_role": { "type": "string", "enum": ["argument", "material_topic", "mixed"] },
+                  "develops_side_a": { "type": "boolean" },
+                  "develops_side_b": { "type": "boolean" },
+                  "explains_relationship": { "type": "boolean" },
+                  "evidence": { "type": "string", "minLength": 1 }
+                }
+              }
+            },
+            "material_transformation_quote": { "type": "string", "minLength": 1 }
+          }
+        },
+        "material_support": { "type": "string", "minLength": 1 },
+        "reasoning_bridge": { "type": "string", "minLength": 1 },
+        "counterargument_or_boundary": { "type": ["string", "null"] },
+        "return_to_thesis": { "type": "string", "minLength": 1 },
+        "topic_specificity": { "type": "string", "enum": ["strong", "adequate", "weak"] },
+        "argument_line_status": { "type": "string", "enum": ["sound", "weak", "broken"] },
+        "material_support_status": { "type": "string", "enum": ["strong", "partial", "weak"] },
+        "template_risk": { "type": "string", "enum": ["none", "local", "pervasive"] },
+        "language_status": { "type": "string", "enum": ["strong", "adequate", "weak", "poor", "unreadable"], "description": "仅在省略顶层维度时，用于确定性编译语言维度。" },
+        "example_support_status": { "type": "string", "enum": ["strong", "adequate", "partial", "weak", "missing"], "description": "仅在省略顶层维度时，用于确定性编译论据例证维度。" },
+        "dimension_levels": { "type": "object", "description": "可选的嵌套维度等级；入口会原样提升到顶层并补配置权重。" },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "application_review": {
+      "type": "object",
+      "description": "贯彻执行/应用文专用审核回执。不使用大作文模板风险规则。",
+      "required": ["identity_status", "genre_format_status", "purpose_audience_status", "content_status", "structure_status", "tone_status", "template_use_status", "evidence"],
+      "properties": {
+        "identity_status": { "type": "string", "enum": ["accurate", "partial", "wrong"] },
+        "genre_format_status": { "type": "string", "enum": ["complete", "partial", "missing"] },
+        "purpose_audience_status": { "type": "string", "enum": ["strong", "adequate", "weak"] },
+        "content_status": { "type": "string", "enum": ["complete", "partial", "missing"] },
+        "structure_status": { "type": "string", "enum": ["clear", "partial", "unclear"] },
+        "tone_status": { "type": "string", "enum": ["appropriate", "partial", "wrong"] },
+        "template_use_status": { "type": "string", "enum": ["appropriate", "overgeneralized", "not_applicable"] },
+        "dimension_levels": { "type": "object", "description": "可选的嵌套维度等级；缺省时入口按应用文审核状态确定性编译。" },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    },
+    "holistic_review": {
+      "type": "object",
+      "description": "小题的整体复核。用于在逐点证据之后定档，不作为额外加分项。",
+      "properties": {
+        "overall_quality": { "type": "integer", "minimum": 0, "maximum": 4 },
+        "order_logic_status": { "type": "string", "enum": ["sound", "minor_risk", "broken"] },
+        "duplicate_status": { "type": "string", "enum": ["none", "risk", "confirmed"] },
+        "layering_status": { "type": "string", "enum": ["clear", "merged", "unclear"] },
+        "structure_required": { "type": "boolean" },
+        "structure_status": { "type": "string", "enum": ["clear", "partial", "missing", "not_applicable"] },
+        "evidence": { "type": "string", "minLength": 1 }
+      }
+    }
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0025",
+  "name": "评价看法分析",
+  "question_type": "综合分析",
+  "trigger_signals": ["评价", "怎么看", "如何看待", "是否正确", "是否合理", "谈谈看法"],
+  "exclusion_signals": ["写一篇文章", "提出对策"],
+  "required_task_elements": ["评价对象", "材料来源范围", "字数限制"],
+  "optional_task_elements": ["评价标准", "观点要求"],
+  "default_format_reference": "先明确判断，再结合材料分析依据、影响和边界",
+  "workflow_stages": ["审题", "材料遍", "观点判断", "多角度分析", "组织表达"],
+  "recommended_card_ids": ["sl-card-0026", "sl-card-0028"],
+  "mode_routes": {
+    "审题": ["sl-card-0026"],
+    "解析": ["sl-card-0026", "sl-card-0028"],
+    "批改": ["sl-card-0056"],
+    "修改二稿": []
+  },
+  "fallback_behavior": "未命中原型时回退到综合分析通用路由",
+  "constraints": ["必须明确评价立场", "评价依据必须来自材料", "不得把评价题写成单纯原因或做法罗列"],
+  "evidence_refs": ["national-exam-general-evaluation-analysis"]
+}

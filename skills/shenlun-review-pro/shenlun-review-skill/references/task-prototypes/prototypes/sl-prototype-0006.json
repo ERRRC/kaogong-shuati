@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0006",
+  "name": "多概念阐释",
+  "question_type": "综合分析",
+  "trigger_signals": ["三条黄河", "多个概念", "分别阐释"],
+  "exclusion_signals": ["谈谈理解"],
+  "required_task_elements": ["概念列表", "材料来源范围"],
+  "optional_task_elements": ["概念关系要求"],
+  "default_format_reference": "分别阐释各概念含义，再总结整体关系",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构"],
+  "recommended_card_ids": ["sl-card-0026", "sl-card-0029"],
+  "mode_routes": {
+    "审题": ["sl-card-0026"],
+    "解析": ["sl-card-0026", "sl-card-0029"],
+    "批改": ["sl-card-0056"],
+    "修改二稿": []
+  },
+  "fallback_behavior": "未命中原型时回退到综合分析通用路由",
+  "constraints": ["必须为每个概念分别定位材料", "必须总结概念间关系"],
+  "evidence_refs": ["national-exam-2025-sub-provincial-q1"]
+}

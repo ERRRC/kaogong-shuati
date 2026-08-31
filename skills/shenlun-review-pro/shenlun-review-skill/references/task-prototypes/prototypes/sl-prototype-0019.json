@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0019",
+  "name": "宣传介绍类",
+  "question_type": "贯彻执行",
+  "trigger_signals": ["宣传展板", "宣传稿", "宣传材料", "宣传介绍", "为*展板*拟写*文稿", "导言", "编者按", "报道", "新闻稿"],
+  "exclusion_signals": ["情况报告", "调研报告", "倡议书", "公开信", "讲话稿", "工作方案", "通知", "短评"],
+  "required_task_elements": ["宣传对象", "介绍主题", "材料来源范围", "字数限制"],
+  "optional_task_elements": ["标题", "语言风格"],
+  "default_format_reference": "标题+正文，内容组件按题面主题和材料关系组织",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构", "表达"],
+  "recommended_card_ids": ["sl-card-0036", "sl-card-0037", "sl-card-0082"],
+  "mode_routes": {
+    "审题": ["sl-card-0036", "sl-card-0082"],
+    "解析": ["sl-card-0036", "sl-card-0037", "sl-card-0082"],
+    "批改": ["sl-card-0067"],
+    "修改二稿": ["sl-card-0068"]
+  },
+  "fallback_behavior": "未命中时停止并说明无法确定文种，不得硬套情况报告",
+  "constraints": ["内容组件以题面主题为准", "语言可生动但不得制造材料外事实", "不得套用情况报告固定结构"],
+  "evidence_refs": ["national-exam-2025-sub-provincial-q3"]
+}

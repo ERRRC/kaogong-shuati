@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0024",
+  "name": "亮点启示概括",
+  "question_type": "归纳概括",
+  "trigger_signals": ["哪些启示", "启示", "哪些亮点", "亮点", "哪些特点", "巧*哪些地方", "各自体现*亮点"],
+  "exclusion_signals": ["谈谈*理解", "为什么说", "分析原因", "提出对策", "写一篇文章"],
+  "required_task_elements": ["亮点或启示对象", "材料来源范围", "字数限制"],
+  "optional_task_elements": ["分类要求", "经验迁移要求"],
+  "default_format_reference": "分条提炼亮点、特色或启示，并保留材料依据",
+  "workflow_stages": ["审题", "材料遍", "亮点提取", "归纳组织", "表达"],
+  "recommended_card_ids": ["sl-card-0001", "sl-card-0003"],
+  "mode_routes": {
+    "审题": ["sl-card-0001"],
+    "解析": ["sl-card-0001", "sl-card-0003"],
+    "批改": ["sl-card-0009"],
+    "修改二稿": ["sl-card-0008"]
+  },
+  "fallback_behavior": "未命中原型时回退到归纳概括通用路由",
+  "constraints": ["亮点或启示必须有材料依据", "不得把普通事实或结果机械改写成启示", "多个案例应分别提取并避免重复"],
+  "evidence_refs": ["national-exam-general-highlight-insight"]
+}

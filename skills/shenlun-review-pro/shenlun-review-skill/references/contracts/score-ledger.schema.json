@@ -1,0 +1,132 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ScoreLedger",
+  "description": "Point-level and structure-level scoring evidence ledger for a single answer.",
+  "type": "object",
+  "required": ["schema_version", "ledger_id", "task_id", "answer_id", "point_ledger", "structure_ledger"],
+  "properties": {
+    "schema_version": { "type": "string", "const": "1.0" },
+    "ledger_id": { "type": "string", "minLength": 1 },
+    "task_id": { "type": "string", "minLength": 1 },
+    "answer_id": { "type": "string", "minLength": 1 },
+    "point_ledger": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["point_id", "material_evidence", "match_type", "coverage_status"],
+        "properties": {
+          "point_id": { "type": "string", "minLength": 1, "description": "References atomic_point.point_id from analysis" },
+          "task_component_ids": {
+            "type": "array",
+            "items": { "type": "string" },
+            "description": "Which task components this point serves"
+          },
+        "material_evidence": {
+          "type": ["string", "null"],
+          "description": "Exact text from material for normal points. Must be null for an independent extra_material claim."
+          },
+          "user_quote": {
+            "type": ["string", "null"],
+            "description": "Exact quote from user answer. Must exist verbatim in user answer. Null if not covered."
+          },
+          "match_type": {
+            "type": "string",
+            "enum": ["keyword_match", "semantic_match", "no_match", "extra_material"],
+            "description": "How the user answer matches the material point"
+          },
+          "coverage_status": {
+            "type": "string",
+            "enum": ["完整覆盖", "部分覆盖", "等义表达", "未覆盖", "超出材料"]
+          },
+          "point_value": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "该点满分值。来自 point_definitions.point_value。null时fallback到维度等级制。"
+          },
+          "earned_value": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "实得分数。由引擎根据 coverage_status、match_type、expansion_level 和赋分模式自动计算。null时fallback到维度等级制。"
+          },
+          "expansion_level": {
+            "type": "string",
+            "enum": ["充分展开", "基本展开", "简略提及", "仅列标题", "未提及"],
+            "description": "用户对该点的展开程度。充分展开=100%；基本展开=85%；简略提及=65%；仅列标题=35%；未提及=0%。留空时引擎按 match_type 保守推导。"
+          },
+          "expansion_evidence": {
+            "type": ["string", "null"],
+            "description": "展开度判定的用户原句证据。"
+          },
+          "credit_reason": { "type": ["string", "null"], "description": "Why credit was given" },
+          "loss_reason": { "type": ["string", "null"], "description": "Why credit was lost. Must be null for non-independent or optional atomic points." },
+          "deduction_owner": {
+            "type": ["string", "null"],
+            "description": "Primary dimension owning this deduction. Must be null for non-independent or optional atomic points; otherwise validated dynamically against scoring-weights.json. Includes: 任务符合, 要点覆盖, 准确有据, 分类组织, 简洁表达, 关系逻辑, 结论解释, 组织表达, 问题诊断, 针对匹配, 可行具体, 身份文种格式, 内容覆盖, 目的场景, 结构, 语言语气, 立意扣题, 材料运用, 论证深度, 论据例证, 语言."
+          },
+          "modification_action": { "type": ["string", "null"], "description": "Suggested fix for second draft" },
+          "reference_support": {
+            "type": "string",
+            "enum": ["supported", "partial", "unsupported", "disputed", "not_applicable"],
+            "description": "Whether reference answers support this point"
+          }
+          ,"critical_qualifiers": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1 },
+            "description": "关键限定/落地动作，仅用于判断总括点是否完整覆盖。"
+          }
+          ,"qualifier_status": { "type": ["string", "null"], "enum": ["complete", "partial", "missing", null] }
+          ,"missing_qualifiers": { "type": "array", "items": { "type": "string" } }
+        }
+      }
+    },
+    "structure_ledger": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["element_id", "element_type", "required", "status"],
+        "properties": {
+          "element_id": { "type": "string", "minLength": 1 },
+          "element_type": {
+            "type": "string",
+            "enum": ["format", "content_component", "logical_relation", "scenario", "organization", "style"]
+          },
+          "required": { "type": "boolean" },
+          "basis": { "type": "string", "description": "Why this element is required or optional" },
+          "user_evidence": { "type": ["string", "null"], "description": "Evidence from user answer" },
+          "status": {
+            "type": "string",
+            "enum": ["satisfied", "partial", "missing", "not_applicable"]
+          },
+          "element_value": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "应用文板块级分值。如格式3分、背景3分、内容12分。结构赋分模式下有值。"
+          },
+          "earned_value": {
+            "type": ["number", "null"],
+            "minimum": 0,
+            "description": "该板块实得分数。引擎根据 status 和 element_value 自动计算。"
+          },
+          "credit_reason": { "type": ["string", "null"] },
+          "loss_reason": { "type": ["string", "null"] },
+          "deduction_owner": {
+            "type": ["string", "null"],
+            "description": "Primary dimension owning this deduction. Validated dynamically against scoring-weights.json."
+          },
+          "modification_action": { "type": ["string", "null"] }
+        }
+      }
+    },
+    "allowed_variants": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Acceptable alternative phrasings"
+    },
+    "forbidden_results": {
+      "type": "array",
+      "items": { "type": "string" },
+      "description": "Outcomes that must not occur (validation rules)"
+    },
+    "issues": { "type": "array", "items": { "type": "string" } }
+  }
+}

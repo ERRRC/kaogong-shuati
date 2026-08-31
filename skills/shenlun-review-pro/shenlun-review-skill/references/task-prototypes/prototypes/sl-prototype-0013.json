@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0013",
+  "name": "工作指南与手册",
+  "question_type": "贯彻执行",
+  "trigger_signals": ["工作指南", "操作指南", "工作手册", "手册"],
+  "exclusion_signals": ["情况报告", "短评", "提案"],
+  "required_task_elements": ["使用对象", "材料来源范围", "字数限制"],
+  "optional_task_elements": ["工作场景"],
+  "default_format_reference": "标题+正文（事项→内容，指南为步骤式，手册为分类式）",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构"],
+  "recommended_card_ids": ["sl-card-0036", "sl-card-0037", "sl-card-0078"],
+  "mode_routes": {
+    "审题": ["sl-card-0036"],
+    "解析": ["sl-card-0036", "sl-card-0037", "sl-card-0078"],
+    "批改": ["sl-card-0067"],
+    "修改二稿": ["sl-card-0068"]
+  },
+  "fallback_behavior": "未命中原型时回退到贯彻执行通用路由",
+  "constraints": ["事项与内容必须配对", "不得补充材料中不存在的操作细节", "指南侧重操作步骤，手册侧重系统性分类"],
+  "evidence_refs": ["national-exam-2025-enforcement-q3"]
+}

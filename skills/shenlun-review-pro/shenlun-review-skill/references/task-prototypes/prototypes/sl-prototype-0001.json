@@ -1,0 +1,22 @@
+{
+  "schema_version": "1.0",
+  "prototype_id": "sl-prototype-0001",
+  "name": "做法概括",
+  "question_type": "归纳概括",
+  "trigger_signals": ["概括做法", "总结经验", "成功经验", "分析*成功经验", "总结*成功经验", "概括*成功经验", "发展经验", "经验做法", "成功做法", "概括成功做法", "归纳主要做法", "简述*做法", "主要做法及成效", "做法及成效", "如何*实现", "如何解决这些问题", "问题是如何解决的", "他是如何解决", "小雷是如何解决", "干部是如何解决", "工作人员是如何解决", "团队是如何解决", "怎样", "哪些做法"],
+  "exclusion_signals": ["概括变化", "梳理问题", "分类归纳", "怎样理解", "如何理解"],
+  "required_task_elements": ["概括对象", "材料来源范围", "字数限制"],
+  "optional_task_elements": ["分类要求", "身份限定"],
+  "default_format_reference": "分条列点，每条含提炼词+展开",
+  "workflow_stages": ["审题", "材料遍", "要点提取", "组织结构", "表达"],
+  "recommended_card_ids": ["sl-card-0001", "sl-card-0003", "sl-card-0005"],
+  "mode_routes": {
+    "审题": ["sl-card-0001"],
+    "解析": ["sl-card-0001", "sl-card-0003"],
+    "批改": ["sl-card-0009"],
+    "修改二稿": ["sl-card-0008"]
+  },
+  "fallback_behavior": "未命中原型时回退到归纳概括通用路由",
+  "constraints": ["得分点只能来自材料", "不得编造材料中不存在的做法"],
+  "evidence_refs": ["national-exam-2024-sub-provincial-q1"]
+}
