@@ -16,6 +16,7 @@ import { listAgents, getAgent, updateAgent, getHistory, callAgent, initAiConfig,
 import { extractMaterialFromPdf } from './lib/pdf-ocr.mjs';
 import { FENBI_TREE, ESSAY_TREE, SHENLUN_TREE, ZONGYING_TREE } from './lib/fenbi-tree.mjs';
 import { mapChapterToNode } from './lib/xingce-chapter-map.mjs';
+import { customQuestionHtml, parseImages } from './public/lib/custom-parser.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.argv[2] || process.env.PORT || 3000);
@@ -24,7 +25,7 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const outDir = path.join(__dirname, 'out');
 
 if (!fs.existsSync(DB_FILE)) {
-  console.error(`✗ 找不到题库文件: ${DB_FILE}\n  请先运行 node import-to-sqlite.mjs 生成 tiku.db`);
+  console.error(`✗ 找不到题库文件: ${DB_FILE}\n  题库数据与采集工具不随本仓库分发，请先在本地生成 tiku.db`);
   process.exit(1);
 }
 
@@ -48,6 +49,8 @@ pdb.exec(`
     is_correct INTEGER,             -- 客观题 0/1；主观题（申论/综应）为 NULL 待批改
     cost_ms INTEGER DEFAULT 0,
     archived INTEGER DEFAULT 0,     -- 错题本移除标记（保留历史供统计/进度 AI）
+    group_key TEXT DEFAULT '',      -- 错题本/收藏/笔记 来源归档：大模块（科目名 / 'custom' / ''=未分类）
+    sub_key TEXT DEFAULT '',        -- 子模块（章节树大模块；自定义题不分子模块）
     created_at TEXT DEFAULT (datetime('now','localtime'))
   );
   CREATE INDEX IF NOT EXISTS idx_records_subject ON practice_records(subject, chapter);
@@ -56,6 +59,11 @@ pdb.exec(`
 `);
 // 兼容已存在的库：补充 archived 列
 try { pdb.exec('ALTER TABLE practice_records ADD COLUMN archived INTEGER DEFAULT 0'); } catch {}
+// 兼容已存在的库：补充来源归档列（group_key/sub_key，旧数据靠"一键整理"回填）
+try { pdb.exec("ALTER TABLE practice_records ADD COLUMN group_key TEXT DEFAULT ''"); } catch {}
+try { pdb.exec("ALTER TABLE practice_records ADD COLUMN sub_key TEXT DEFAULT ''"); } catch {}
+// 来源归档索引（旧库补列后才可建，故单独执行）
+try { pdb.exec('CREATE INDEX IF NOT EXISTS idx_records_group ON practice_records(group_key, sub_key, archived, is_correct)'); } catch {}
 // 兼容已存在的库：custom_batches 补充 subject 列（旧库无此列）
 try { pdb.exec('ALTER TABLE custom_batches ADD COLUMN subject TEXT DEFAULT \'自定义\''); } catch {}
 // ---- 自定义题库（2026-08-15）：批次 = 一次导入的文件；题目字段与粉笔 questions 同构 ----
@@ -79,6 +87,10 @@ pdb.exec(`
   );
   CREATE INDEX IF NOT EXISTS idx_cq_batch ON custom_questions(batch_id);
 `);
+// 兼容已存在的库：自定义题补充 images 列（图片题：题干图/材料图，JSON [{role,dataUrl}]）
+try { pdb.exec("ALTER TABLE custom_questions ADD COLUMN images TEXT DEFAULT '[]'"); } catch {}
+// 兼容已存在的库：自定义题补充 material_id 列（材料分组：同 material_id 的题共用一份材料，刷题时显示 第 n/m 小问）
+try { pdb.exec("ALTER TABLE custom_questions ADD COLUMN material_id TEXT DEFAULT ''"); } catch {}
 // 申论材料缓存表（从真题 PDF OCR 提取）
 pdb.exec(`
   CREATE TABLE IF NOT EXISTS materials (
@@ -101,9 +113,31 @@ pdb.exec(`
     question_id INTEGER NOT NULL UNIQUE,
     subject TEXT DEFAULT '',
     chapter TEXT DEFAULT '',
+    group_key TEXT DEFAULT '',      -- 来源归档：大模块（科目名 / 'custom' / ''=未分类）
+    sub_key TEXT DEFAULT '',        -- 子模块（章节树大模块；自定义题不分子模块）
     created_at TEXT DEFAULT (datetime('now','localtime'))
   );
 `);
+// 兼容已存在的库：收藏补充来源归档列
+try { pdb.exec("ALTER TABLE favorites ADD COLUMN group_key TEXT DEFAULT ''"); } catch {}
+try { pdb.exec("ALTER TABLE favorites ADD COLUMN sub_key TEXT DEFAULT ''"); } catch {}
+// 笔记表（跨设备同步；一题一笔记，重复添加=更新；question_id 用 TEXT 支持 custom- 前缀自定义题）
+pdb.exec(`
+  CREATE TABLE IF NOT EXISTS notes (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    question_id TEXT NOT NULL UNIQUE,
+    subject TEXT DEFAULT '',
+    chapter TEXT DEFAULT '',
+    note TEXT DEFAULT '',
+    group_key TEXT DEFAULT '',      -- 来源归档：大模块（科目名 / 'custom' / ''=未分类）
+    sub_key TEXT DEFAULT '',        -- 子模块（章节树大模块；自定义题不分子模块）
+    created_at TEXT DEFAULT (datetime('now','localtime')),
+    updated_at TEXT DEFAULT (datetime('now','localtime'))
+  );
+`);
+// 兼容已存在的库：笔记补充来源归档列
+try { pdb.exec("ALTER TABLE notes ADD COLUMN group_key TEXT DEFAULT ''"); } catch {}
+try { pdb.exec("ALTER TABLE notes ADD COLUMN sub_key TEXT DEFAULT ''"); } catch {}
 // AI 解析缓存表（同一题同一作答只调一次 LLM，之后秒回；跨设备同步）
 pdb.exec(`
   CREATE TABLE IF NOT EXISTS ai_explains (
@@ -116,23 +150,6 @@ pdb.exec(`
     created_at TEXT DEFAULT (datetime('now','localtime')),
     PRIMARY KEY (question_id, selected, correct)
   );
-`);
-
-// ---------- 使用统计埋点库（stats.db） ----------
-// 事件带"发生时的原始时间戳 ts"，服务端按 ts 聚合 DAU/MAU（补报不影响准确性）；
-// install_id 由客户端生成（UUID，永久不变），COUNT(DISTINCT install_id) 即"人数"。
-const STATS_DB = path.join(__dirname, 'stats.db');
-const sdb = new DatabaseSync(STATS_DB, { timeout: 10000 });
-sdb.exec(`
-  CREATE TABLE IF NOT EXISTS telemetry_events (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    install_id TEXT NOT NULL,
-    event TEXT NOT NULL,
-    ts INTEGER NOT NULL,
-    data TEXT DEFAULT ''
-  );
-  CREATE INDEX IF NOT EXISTS idx_tele_install ON telemetry_events(install_id);
-  CREATE INDEX IF NOT EXISTS idx_tele_ts ON telemetry_events(ts);
 `);
 
 // ---------- 工具 ----------
@@ -150,8 +167,8 @@ async function callVision(apiKey, baseUrl, model, imgs, mode = 'describe') {
   const url = baseUrl.replace(/\/+$/, '') + '/chat/completions';
   const text = mode === 'ocr'
     ? '这是一张考生手写或打印的答题纸图片。请逐字准确转写图片中的全部作答文字（包括标点、数字、段落换行）。要求：1) 手写潦草处根据上下文合理推断；2) 不要修改、润色或添加任何内容；3) 只输出识别出的原文，不要任何解释或标记。'
-    : mode === 'structure'
-    ? '这是一张考公题目图片（试卷/练习册/资料截图，可能包含一道或多道题，也可能混有笔记、页码等非题目内容）。请仔细观察整张图片：先筛选出真正的题目（过滤笔记、说明、考情、页眉页脚、页码等非题目内容；拿不准但疑似题目的保留），再把每道题整理为结构化 JSON，只输出 JSON，不要任何其他文字、解释或 Markdown 代码块：\n{"questions":[{"prompt":"题干","material":"材料（材料题才有的背景材料；没有则为空字符串）","options":["选项文本1","选项文本2"],"answer":"答案原文（如 A / AB / 正确；没有则为空字符串）","analysis":"解析（没有则为空字符串）"}]}\n要求：忠实图片内容，不编造、不补全缺失信息；一道题一个对象；同一材料下有多道小题时，每道小题的 material 都填同一材料；选项顺序与图片一致；判断题没有选项时 options 留空数组；OCR 转写造成的错别字尽量按常识修正，无法确认的保留原文。'
+: mode === 'structure'
+	    ? '这是一张考公题目图片（试卷/练习册/资料截图，可能包含一道或多道题，也可能混有笔记、页码、答题App界面元素等非题目内容）。\n\n请仔细观察整张图片，先筛选出真正的题目，再每道题整理为结构化 JSON。\n\n## 一、题型识别\n\n### 1. 图形推理题\n- 题干：引导语如「从所给的四个选项中，选择最合适的一个填入问号处」「左图为给定的多面体」「左边给定的是正方体的外表面展开图」「把下面的六个图形分为两类」等\n- 选项：\n  - 普通图推 → 图片中选项是图形，无法转写文字时写 {"A. A", "B. B", "C. C", "D. D"}\n  - 分类题（题干含「把下面的六个图形分为两类」）→ 选项是编号文字，原样保留如 "A. ①②④，③⑤⑥"\n- prompt 只放引导语原文，不要描述图形内容\n\n### 2. 定义判断题\n- 题干：一段概念定义 + 问题「根据上述定义，下列…」「以下符合…的是」「以下不属于…的是」\n- 选项：4 个完整的事例描述，逐字转写\n\n### 3. 逻辑判断题\n- 题干：一段论述 + 问题\n- 选项：4 个完整推理\n\n### 4. 判断题（对错题）\n- 选项固定为 ["正确", "错误"]\n- answer 为"正确"或"错误"\n\n### 5. 材料题（资料分析/一拖五）\n- 题干前有材料（图表或文字），材料文字摘要放入 material 字段\n- 每道小题独立一条记录，每条的 material 都填同一材料\n\n## 二、输出格式\n{"questions":[{"prompt":"题干","material":"材料（没有则为空字符串）","options":["A. 选项1","B. 选项2"],"answer":"答案字母，单选如 A / 多选如 ABD / 判断如 正确；图片未显示答案则留空","analysis":"解析（没有则为空字符串）","category":"题目分类（言语理解/判断推理/数量关系/资料分析/常识判断/申论/综应；不确定则留空）"}]}\n\n## 三、要求\n1) 忠实图片内容，不编造、不补全缺失信息；一道题一个对象\n2) 图形推理题选项为占位符 "A. A" "B. B" "C. C" "D. D"，不要编造图形文字\n3) 分类题选项完整保留编号文字，如 "A. ①②④，③⑤⑥"\n4) 材料题的图表文字尽量准确转写进 material\n5) answer 只能从图片中明确标注的答案信息提取；图片未显示答案时必须留空字符串，禁止自行计算\n6) 判断图片中题目的类别并填入 category 字段\n7) 过滤噪音：页码、标题、答题按钮、统计行等非题目内容\n8) 只输出一个 JSON，不要任何其他文字、解释、Markdown 代码块或思考过程'
     : '这是一道考公题目的图片（可能包含题干图形序列和 A/B/C/D 选项图形）。请逐一详细转写图片中的全部内容：题干部分描述每个图形的形状/线条/数量/位置/规律；选项部分标注 A/B/C/D 对应关系。不要遗漏任何图形或文字。';
   const content = [
     { type: 'text', text },
@@ -378,6 +395,59 @@ function essayObjectiveGroup(ch) {
   if (/(不定项)/.test(ch)) return '不定项';
   if (/(填空)/.test(ch)) return '填空';
   return '其他';
+}
+
+// ============ 错题本/收藏/笔记 来源归类（2026-08-22，与 lib/local-queries.mjs classifySource 同构，双端同步维护） ============
+// 归档维度：groupKey=大模块（科目），subKey=子模块（章节树大模块 / 自定义题不分子模块 / ''=未分类）
+const SOURCE_GROUPS = [
+  { key: '公务员·行测', name: '行测' },
+  { key: '事业编·职测', name: '职测' },
+  { key: '公务员·申论', name: '申论' },
+  { key: '事业编·综应', name: '综应' },
+  { key: 'custom', name: '自定义题库' },
+  { key: '', name: '未分类' },
+];
+function sourceGroupName(key) {
+  return (SOURCE_GROUPS.find((g) => g.key === key) || SOURCE_GROUPS[SOURCE_GROUPS.length - 1]).name;
+}
+/** 题目来源分类：custom- 前缀 → 自定义题库；内置题 → 按科目章节目录映射到章节树大模块；查不到 → 未分类 */
+function classifySource(questionId) {
+  const id = String(questionId || '');
+  if (id.startsWith('custom-')) return { groupKey: 'custom', groupName: sourceGroupName('custom'), subKey: '', subName: '', paperId: null };
+  const q = qQuestionById.get(id);
+  if (!q) return { groupKey: '', groupName: sourceGroupName(''), subKey: '', subName: '', paperId: null };
+  const p = qPaperById.get(q.paperId);
+  const subject = p ? (p.subjectName || '') : '';
+  let sub = '';
+  if (subject === '公务员·行测' || subject === '事业编·职测') {
+    const node = mapChapterToNode(q.chapter);
+    if (node) sub = node.group;
+  } else if (subject === '公务员·申论' || subject === '事业编·综应') {
+    const node = mapEssayChapterToNode(q.chapter);
+    if (node) sub = node.group;
+    else if (essayObjectiveGroup(q.chapter) !== '其他') sub = '客观题';
+  }
+  return { groupKey: subject, groupName: sourceGroupName(subject), subKey: sub, subName: sub, paperId: q.paperId ?? null };
+}
+/** 分组总览组装：固定 5 大模块（空计数也返回）+ 未分类（仅 >0 时）；rows=[{g,s,c}] */
+function buildSourceGroups(rows) {
+  const totals = new Map();
+  const subs = new Map();
+  for (const r of rows) {
+    totals.set(r.g, (totals.get(r.g) || 0) + r.c);
+    if (!subs.has(r.g)) subs.set(r.g, new Map());
+    subs.get(r.g).set(r.s || '', (subs.get(r.g).get(r.s || '') || 0) + r.c);
+  }
+  const list = SOURCE_GROUPS.filter((g) => g.key !== '').map(({ key, name }) => {
+    const sm = subs.get(key) || new Map();
+    return {
+      key, name, count: totals.get(key) || 0,
+      subs: [...sm.entries()].map(([k, c]) => ({ key: k, name: k || '未分类', count: c })).sort((a, b) => b.count - a.count),
+    };
+  });
+  const unclassified = totals.get('') || 0;
+  if (unclassified > 0) list.push({ key: '', name: '未分类', count: unclassified, subs: [] });
+  return list;
 }
 /** 随机出题（支持真题/模拟题过滤；chapters 为数组时可多章节混出；year: 'all'|'3'|'5'|'10'，缺省近十年；difficulty: 'easy'|'balanced'|'hard'|'random'）
  *  注意：题库删除后 id 有空洞，单点取样会落空 → 多轮取样 + 顺序补取，凑够 n 道
@@ -1165,6 +1235,49 @@ async function buildZhiCePaper(opts) {
 // 只读题库的静态统计缓存（题库运行时不变；仅缓存 totals/idxMap 等不含做题统计的数据）
 const chapterCache = new Map();
 
+/**
+ * 自定义题材料分组组装（Web/App 双端同构）：
+ * 同一 material_id 的题归为一组（组内按 id 升序，整组在出题序列中连续排列），
+ * 组内所有题共用「第一个有材料内容」的题的材料文本与材料图，并标记 groupId/groupIndex/groupTotal，
+ * 前端据此显示材料框与「第 n/m 小问」（material_id 为空的题不分组、保持原顺序）。
+ * rows: 按 id 升序的 custom_questions 行；mapper(r): 单题行 → 出题对象。
+ */
+function groupCustomPracticeRows(rows, mapper) {
+  const byId = new Map(rows.map((r) => [String(r.id), r]));
+  const groups = new Map();   // material_id -> 成员行（组内 id 升序）
+  const order = [];           // 'q:<id>' | 'g:<gid>'：出题序列（按组首次出现位置放置整组）
+  for (const r of rows) {
+    const gid = String(r.material_id || '').trim();
+    if (!gid) { order.push('q:' + r.id); continue; }
+    if (!groups.has(gid)) { groups.set(gid, []); order.push('g:' + gid); }
+    groups.get(gid).push(r);
+  }
+  const out = [];
+  for (const key of order) {
+    if (key.startsWith('q:')) {
+      const r = byId.get(key.slice(2));
+      if (r) out.push(mapper(r));
+      continue;
+    }
+    const gid = key.slice(2);
+    const members = groups.get(gid);
+    // 材料持有者：组内第一个有材料文本的题（否则取组首题；其材料可能为空）
+    const holder = members.find((m) => String(m.material || '').trim()) || members[0];
+    const holderMatImgs = parseImages(holder.images).filter((im) => im.role === 'material');
+    const holderHtml = customQuestionHtml({ ...holder, images: holderMatImgs }).materialHtml;
+    members.forEach((m, i) => {
+      const q = mapper(m);
+      q.material = String(holder.material || '').trim();
+      q.materialHtml = holderHtml;
+      q.groupId = gid;
+      q.groupIndex = i;
+      q.groupTotal = members.length;
+      out.push(q);
+    });
+  }
+  return out;
+}
+
 const server = http.createServer(async (req, res) => {
   const url = new URL(req.url, `http://${req.headers.host || 'localhost'}`);
   const pathname = decodeURIComponent(url.pathname);
@@ -1214,7 +1327,7 @@ const server = http.createServer(async (req, res) => {
         if (!chapterCache.has(catKey)) {
           // 综应只保留 A 类（用户要求）：过滤联考B/C/D类试卷分类
           const rows = db.prepare(
-            `SELECT p.category, COUNT(DISTINCT p.id) AS papers, COUNT(DISTINCT q.questionId) AS questions FROM papers p LEFT JOIN questions q ON q.paperId = p.id WHERE p.subjectName = ? AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}' GROUP BY p.category ORDER BY papers DESC`
+            `SELECT p.category, COUNT(DISTINCT p.id) AS papers, COUNT(DISTINCT q.questionId) AS questions FROM papers p LEFT JOIN questions q ON q.paperId = p.id WHERE p.subjectName = ? AND substr(p.name, 1, 4) BETWEEN '${YEAR_FROM}' AND '${YEAR_TO}' GROUP BY p.category ORDER BY papers DESC, category`
           ).all(subject);
           const filtered = subject === '事业编·综应' ? rows.filter((r) => !['联考B类', '联考C类', '联考D类'].includes(r.category)) : rows;
           chapterCache.set(catKey, filtered);
@@ -1321,9 +1434,10 @@ const server = http.createServer(async (req, res) => {
           const cr = pdb.prepare('SELECT * FROM custom_questions WHERE id = ?').get(cid);
           if (!cr) return err(res, 404, '题目不存在');
           const b = pdb.prepare('SELECT name, subject FROM custom_batches WHERE id = ?').get(cr.batch_id) || {};
+          const { contentHtml, materialHtml } = customQuestionHtml({ ...cr, images: parseImages(cr.images) });
           return json(res, 200, {
             questionId: String(raw), id: String(raw), type: 'custom',
-            content: cr.prompt, contentHtml: cr.prompt, material: cr.material || '',
+            content: cr.prompt, contentHtml, material: cr.material || '', materialHtml,
             options: JSON.parse(cr.options || '[]'), answer: cr.answer || '', answerIndex: cr.answer_index == null ? -1 : Number(cr.answer_index),
             analysis: cr.analysis || '',
             subject: (b.subject || '自定义').trim() || '自定义', chapter: b.name || '',
@@ -1425,14 +1539,24 @@ const server = http.createServer(async (req, res) => {
           for (const r of chapterCache.get(idxKey)) {
             idxMap.set(`${r.category}|${r.sub}`, r.c);
           }
+          // 已做 = 该分类索引下的做题记录数（与总题量同源：question_categories；动态数据，不缓存）
+          const doneMap = new Map(); // `${category}|${sub}` -> {c, ok}
+          for (const r of pdb.prepare(`
+            SELECT qc.category, qc.sub, COUNT(*) c, COALESCE(SUM(r.is_correct), 0) ok
+            FROM practice_records r JOIN question_categories qc ON qc.question_id = r.question_id AND qc.subject = ?
+            GROUP BY qc.category, qc.sub
+          `).all(subject)) {
+            doneMap.set(`${r.category}|${r.sub}`, { c: r.c, ok: r.ok });
+          }
           groups = FENBI_TREE.map((g) => {
             // 统一口径：唯一题数（跨卷重复题去重），纯索引
             const subs = g.subs.map((sub) => {
               const idxTotal = idxMap.get(`${g.group}|${sub.name}`) || 0;
-              return { name: sub.name, total: idxTotal, done: 0, rate: null, chapters: [], leaves: [] };
+              const d = doneMap.get(`${g.group}|${sub.name}`);
+              return { name: sub.name, total: idxTotal, done: d?.c || 0, rate: null, chapters: [], leaves: [] };
             });
             const total = subs.reduce((s, x) => s + x.total, 0);
-            return { group: g.group, total, done: 0, rate: null, chapters: [], subs };
+            return { group: g.group, total, done: subs.reduce((s, x) => s + x.done, 0), rate: null, chapters: [], subs };
           });
         } else {
           // ESSAY_TREE 题库：节点数据来自分类索引（综应/申论）或章节映射（事业编）
@@ -1501,24 +1625,36 @@ const server = http.createServer(async (req, res) => {
           return json(res, 200, { ok: false, error: `组卷失败：${e.message}` });
         }
       }
-      // 收藏：列表（join tiku.questions 取题目摘要；支持分页，兼容旧纯数组结构）
+      // 收藏分组总览（5 大模块 + 未分类）
+      if (pathname === '/api/favorites/groups' && req.method === 'GET') {
+        const rows = pdb.prepare(`SELECT group_key g, sub_key s, COUNT(*) c FROM favorites GROUP BY group_key, sub_key`).all();
+        return json(res, 200, buildSourceGroups(rows));
+      }
+      // 收藏：列表（join tiku.questions 取题目摘要；支持分页与来源归档过滤，兼容旧纯数组结构）
       if (pathname === '/api/favorites' && req.method === 'GET') {
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 200);
         const offset = Math.max(Number(url.searchParams.get('offset') || 0), 0);
+        const hasGroup = url.searchParams.has('group');
+        const group = url.searchParams.get('group') ?? '';
+        const sub = url.searchParams.get('sub') ?? '';
+        const groupCond = hasGroup ? 'AND group_key = ?' : '';
+        const subCond = sub !== '' ? 'AND sub_key = ?' : '';
+        const params = hasGroup ? [group, ...(sub !== '' ? [sub] : []), limit, offset] : [limit, offset];
         const rows = pdb.prepare(`
-          SELECT f.question_id, f.subject, f.chapter, f.created_at, q.content, q.type
+          SELECT f.question_id, f.subject, f.chapter, f.created_at, f.group_key, f.sub_key, q.content, q.type
           FROM favorites f
           LEFT JOIN tiku.questions q ON q.questionId = f.question_id
+          WHERE 1=1 ${groupCond} ${subCond}
           ORDER BY f.id DESC LIMIT ? OFFSET ?
-        `).all(limit, offset);
-        const total = pdb.prepare('SELECT COUNT(*) n FROM favorites').get().n;
+        `).all(...params);
+        const total = pdb.prepare(`SELECT COUNT(*) n FROM favorites WHERE 1=1 ${groupCond} ${subCond}`).get(...(hasGroup ? [group, ...(sub !== '' ? [sub] : [])] : [])).n;
         const list = rows.map((r) => {
           let content = null;
           let type = null;
           if (String(r.question_id).startsWith('custom-')) {
             const cid = Number(String(r.question_id).replace(/^custom-/, ''));
-            const cr = pdb.prepare('SELECT prompt FROM custom_questions WHERE id = ?').get(cid);
-            if (cr) { content = cr.prompt; type = 'custom'; }
+            const cr = pdb.prepare('SELECT prompt, images FROM custom_questions WHERE id = ?').get(cid);
+            if (cr) { content = cr.prompt + (parseImages(cr.images).length ? ' [图]' : ''); type = 'custom'; }
           } else {
             const q = qQuestionById.get(r.question_id);
             if (q) { content = q.content; type = q.type; }
@@ -1541,9 +1677,83 @@ const server = http.createServer(async (req, res) => {
         const { questionId, subject, chapter } = JSON.parse(body || '{}');
         if (questionId == null) return err(res, 400, '缺少 questionId');
         if (req.method === 'POST') {
-          pdb.prepare('INSERT OR IGNORE INTO favorites (question_id, subject, chapter) VALUES (?, ?, ?)').run(questionId, subject || '', chapter || '');
+          const cls = classifySource(questionId); // 收藏时即归档来源（旧收藏靠一键整理回填）
+          pdb.prepare('INSERT OR IGNORE INTO favorites (question_id, subject, chapter, group_key, sub_key) VALUES (?, ?, ?, ?, ?)').run(questionId, subject || '', chapter || '', cls.groupKey, cls.subKey);
         } else {
           pdb.prepare('DELETE FROM favorites WHERE question_id = ?').run(questionId);
+        }
+        return json(res, 200, { ok: true });
+      }
+      // 笔记分组总览（5 大模块 + 未分类）
+      if (pathname === '/api/notes/groups' && req.method === 'GET') {
+        const rows = pdb.prepare(`SELECT group_key g, sub_key s, COUNT(*) c FROM notes GROUP BY group_key, sub_key`).all();
+        return json(res, 200, buildSourceGroups(rows));
+      }
+      // 笔记：列表（联表题面；custom- 前缀取 custom_questions，与收藏同构；支持来源归档过滤）
+      if (pathname === '/api/notes' && req.method === 'GET') {
+        // qid：单条笔记查询（弹层内容兜底：笔记超过预载 200 条时按需取，避免误判「添加笔记」覆盖旧笔记）
+        const qid = url.searchParams.get('qid');
+        if (qid) {
+          const r = pdb.prepare('SELECT question_id, subject, chapter, note, created_at, updated_at FROM notes WHERE question_id = ?').get(String(qid));
+          return json(res, 200, {
+            list: r ? [{ questionId: r.question_id, subject: r.subject || '', chapter: r.chapter || '', note: r.note || '', time: r.updated_at || r.created_at, content: null, type: null }] : [],
+            total: r ? 1 : 0, offset: 0, limit: 1, hasMore: false,
+          });
+        }
+        const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 200);
+        const offset = Math.max(Number(url.searchParams.get('offset') || 0), 0);
+        const hasGroup = url.searchParams.has('group');
+        const group = url.searchParams.get('group') ?? '';
+        const sub = url.searchParams.get('sub') ?? '';
+        const groupCond = hasGroup ? 'AND group_key = ?' : '';
+        const subCond = sub !== '' ? 'AND sub_key = ?' : '';
+        const params = hasGroup ? [group, ...(sub !== '' ? [sub] : []), limit, offset] : [limit, offset];
+        const rows = pdb.prepare(`
+          SELECT question_id, subject, chapter, note, created_at, updated_at
+          FROM notes WHERE 1=1 ${groupCond} ${subCond}
+          ORDER BY COALESCE(updated_at, created_at) DESC, id DESC LIMIT ? OFFSET ?
+        `).all(...params);
+        const total = pdb.prepare(`SELECT COUNT(*) n FROM notes WHERE 1=1 ${groupCond} ${subCond}`).get(...(hasGroup ? [group, ...(sub !== '' ? [sub] : [])] : [])).n;
+        const list = rows.map((r) => {
+          let content = null;
+          let type = null;
+          if (String(r.question_id).startsWith('custom-')) {
+            const cid = Number(String(r.question_id).replace(/^custom-/, ''));
+            const cr = pdb.prepare('SELECT prompt, images FROM custom_questions WHERE id = ?').get(cid);
+            if (cr) { content = cr.prompt + (parseImages(cr.images).length ? ' [图]' : ''); type = 'custom'; }
+          } else {
+            const q = qQuestionById.get(r.question_id);
+            if (q) { content = q.content; type = q.type; }
+          }
+          return {
+            questionId: r.question_id,
+            subject: r.subject,
+            chapter: r.chapter,
+            note: r.note || '',
+            time: r.updated_at || r.created_at,
+            content: content ? content.slice(0, 80) : null,
+            type,
+          };
+        });
+        return json(res, 200, { list, total, offset, limit, hasMore: offset + list.length < total });
+      }
+      // 笔记：添加/修改（一题一笔记，已存在则更新 note 与 updated_at）/ 删除
+      if (pathname === '/api/notes' && (req.method === 'POST' || req.method === 'DELETE')) {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { questionId, subject, chapter, note } = JSON.parse(body || '{}');
+        if (questionId == null) return err(res, 400, '缺少 questionId');
+        if (req.method === 'POST') {
+          const text = String(note || '').trim().slice(0, 500); // 与前端 maxlength=500 对齐，防空内容/超长
+          if (!text) return err(res, 400, '笔记内容不能为空');
+          const cls = classifySource(questionId); // 记笔记时即归档来源（旧笔记靠一键整理回填）
+          // String() 绑定：node:sqlite 对 number 绑定 TEXT 列会序列化成 "2137304.0"，统一字符串避免浮点化
+          pdb.prepare(`
+            INSERT INTO notes (question_id, subject, chapter, note, group_key, sub_key) VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(question_id) DO UPDATE SET note = excluded.note, subject = excluded.subject, chapter = excluded.chapter, updated_at = datetime('now','localtime')
+          `).run(String(questionId), subject || '', chapter || '', text, cls.groupKey, cls.subKey);
+        } else {
+          pdb.prepare('DELETE FROM notes WHERE question_id = ?').run(String(questionId));
         }
         return json(res, 200, { ok: true });
       }
@@ -1572,7 +1782,7 @@ const server = http.createServer(async (req, res) => {
         const { name, questions, subject } = JSON.parse(body || '{}');
         if (!name || !Array.isArray(questions) || questions.length === 0) return err(res, 400, '缺少批次名或题目');
         const subj = String(subject || '').trim() || '自定义';
-        const ins = pdb.prepare('INSERT INTO custom_questions (batch_id, prompt, material, options, answer, answer_index, analysis) VALUES (?, ?, ?, ?, ?, ?, ?)');
+        const ins = pdb.prepare('INSERT INTO custom_questions (batch_id, prompt, material, options, answer, answer_index, analysis, images, material_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)');
         let batchId;
         withTx(() => {
           const tb = pdb.prepare('INSERT INTO custom_batches (name, subject) VALUES (?, ?)').run(String(name).trim(), subj);
@@ -1586,6 +1796,8 @@ const server = http.createServer(async (req, res) => {
               String(q.answer ?? ''),
               q.answer_index == null ? -1 : Number(q.answer_index),
               String(q.analysis ?? ''),
+              JSON.stringify(Array.isArray(q.images) ? q.images : []),
+              String(q.material_id ?? ''),
             );
           }
         });
@@ -1604,8 +1816,8 @@ const server = http.createServer(async (req, res) => {
       if (pathname === '/api/custom/questions' && req.method === 'GET') {
         const batchId = Number(url.searchParams.get('batch_id') || 0);
         if (!batchId) return err(res, 400, '缺少 batch_id');
-        const rows = pdb.prepare('SELECT id, batch_id, prompt, material, options, answer, answer_index, analysis FROM custom_questions WHERE batch_id = ? ORDER BY id ASC').all(batchId);
-        return json(res, 200, { questions: rows.map((r) => ({ ...r, options: JSON.parse(r.options || '[]') })) });
+        const rows = pdb.prepare('SELECT id, batch_id, prompt, material, options, answer, answer_index, analysis, images, material_id FROM custom_questions WHERE batch_id = ? ORDER BY id ASC').all(batchId);
+        return json(res, 200, { questions: rows.map((r) => ({ ...r, images: parseImages(r.images), options: JSON.parse(r.options || '[]') })) });
       }
       // 批改名（可同时改科目）
       if (pathname === '/api/custom/batch' && req.method === 'PUT') {
@@ -1679,23 +1891,44 @@ const server = http.createServer(async (req, res) => {
       }
       // 改单题
       if (pathname === '/api/custom/question' && req.method === 'PUT') {
-        let body = '';
-        for await (const chunk of req) body += chunk;
-        const { id, prompt, material, options, answer, answer_index, analysis } = JSON.parse(body || '{}');
+        let raw = '';
+        for await (const chunk of req) raw += chunk;
+        const parsed = JSON.parse(raw || '{}');
+        const { id, prompt, material, options, answer, answer_index, analysis, images } = parsed;
         const qid = Number(id);
         if (!qid) return err(res, 400, '缺少 id');
-        pdb.prepare(`
-          UPDATE custom_questions SET prompt = ?, material = ?, options = ?, answer = ?, answer_index = ?, analysis = ?
-          WHERE id = ?
-        `).run(
-          String(prompt ?? '').trim(),
-          String(material ?? ''),
-          JSON.stringify(Array.isArray(options) ? options : []),
-          String(answer ?? ''),
-          answer_index == null ? -1 : Number(answer_index),
-          String(analysis ?? ''),
-          qid,
-        );
+        if (Object.prototype.hasOwnProperty.call(parsed, 'material_id')) {
+          // 材料分组接口显式传 material_id：更新之（含清空 = ''）
+          pdb.prepare(`
+            UPDATE custom_questions SET prompt = ?, material = ?, options = ?, answer = ?, answer_index = ?, analysis = ?, images = ?, material_id = ?
+            WHERE id = ?
+          `).run(
+            String(prompt ?? '').trim(),
+            String(material ?? ''),
+            JSON.stringify(Array.isArray(options) ? options : []),
+            String(answer ?? ''),
+            answer_index == null ? -1 : Number(answer_index),
+            String(analysis ?? ''),
+            JSON.stringify(Array.isArray(images) ? images : []),
+            String(parsed.material_id ?? ''),
+            qid,
+          );
+        } else {
+          // 普通编辑弹窗未传 material_id：保留原分组
+          pdb.prepare(`
+            UPDATE custom_questions SET prompt = ?, material = ?, options = ?, answer = ?, answer_index = ?, analysis = ?, images = ?
+            WHERE id = ?
+          `).run(
+            String(prompt ?? '').trim(),
+            String(material ?? ''),
+            JSON.stringify(Array.isArray(options) ? options : []),
+            String(answer ?? ''),
+            answer_index == null ? -1 : Number(answer_index),
+            String(analysis ?? ''),
+            JSON.stringify(Array.isArray(images) ? images : []),
+            qid,
+          );
+        }
         return json(res, 200, { ok: true });
       }
       // 删单题
@@ -1705,6 +1938,23 @@ const server = http.createServer(async (req, res) => {
         pdb.prepare('DELETE FROM custom_questions WHERE id = ?').run(qid);
         return json(res, 200, { ok: true });
       }
+      // 材料分组/取消分组：同一 material_id 的题刷题时共用一份材料（显示 第 n/m 小问）
+      if (pathname === '/api/custom/questions/group' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { ids, action, groupId } = JSON.parse(body || '{}');
+        const idList = (Array.isArray(ids) ? ids : []).map(Number).filter(Boolean);
+        if (!idList.length) return err(res, 400, '请先勾选题目');
+        const exists = pdb.prepare(`SELECT id FROM custom_questions WHERE id IN (${idList.map(() => '?').join(',')})`).all(...idList);
+        if (exists.length !== idList.length) return err(res, 404, '部分题目不存在');
+        if (action === 'ungroup') {
+          pdb.prepare(`UPDATE custom_questions SET material_id = '' WHERE id IN (${idList.map(() => '?').join(',')})`).run(...idList);
+          return json(res, 200, { ok: true, action: 'ungroup', count: exists.length });
+        }
+        const gid = String(groupId || '').trim() || ('g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7));
+        pdb.prepare(`UPDATE custom_questions SET material_id = ? WHERE id IN (${idList.map(() => '?').join(',')})`).run(gid, ...idList);
+        return json(res, 200, { ok: true, action: 'group', groupId: gid, count: exists.length });
+      }
       // 出题（刷题）：字段映射成粉笔 questions 结构，直接喂 enterQuiz
       if (pathname === '/api/custom/practice' && req.method === 'GET') {
         const bid = Number(url.searchParams.get('batch_id') || 0);
@@ -1712,22 +1962,76 @@ const server = http.createServer(async (req, res) => {
         const b = pdb.prepare('SELECT id, name, subject FROM custom_batches WHERE id = ?').get(bid);
         if (!b) return err(res, 404, '批次不存在');
         const bSubj = (b.subject || '自定义').trim() || '自定义';
+        // 题量截断（0=全部，max 100）；保护材料组完整：若截断位置处于组中间，向后延伸到组末
+        const count = Math.max(0, Math.min(Number(url.searchParams.get('count') || 0), 100));
         const rows = pdb.prepare('SELECT * FROM custom_questions WHERE batch_id = ? ORDER BY id ASC').all(bid);
-        const questions = rows.map((r) => ({
-          id: `custom-${r.id}`,
-          questionId: `custom-${r.id}`,
-          content: r.prompt,
-          material: r.material || '',
-          options: JSON.parse(r.options || '[]'),
-          answer: r.answer || '',
-          answerIndex: r.answer_index == null ? -1 : Number(r.answer_index),
-          analysis: r.analysis || '',
-          type: 'custom',
-          subjectName: bSubj,
-          batchId: bid,
-          chapter: b.name,
-        }));
-        return json(res, 200, { questions, batch: { id: bid, name: b.name, subject: bSubj } });
+        const questions = groupCustomPracticeRows(rows, (r) => {
+          const { contentHtml, materialHtml } = customQuestionHtml({ ...r, images: parseImages(r.images) });
+          return {
+            id: `custom-${r.id}`,
+            questionId: `custom-${r.id}`,
+            content: r.prompt,
+            contentHtml,
+            material: r.material || '',
+            materialHtml,
+            options: JSON.parse(r.options || '[]'),
+            answer: r.answer || '',
+            answerIndex: r.answer_index == null ? -1 : Number(r.answer_index),
+            analysis: r.analysis || '',
+            type: 'custom',
+            subjectName: bSubj,
+            batchId: bid,
+            chapter: b.name,
+          };
+        });
+        // 自定义题库：单选 chip 直接控制题量时，保留材料组完整（不把一道「第 3/5 小问」单独丢出）
+        let out = questions;
+        if (count > 0 && questions.length > count) {
+          const cut = questions[count - 1];
+          let endIdx = count;
+          if (cut.groupTotal && cut.groupIndex > 0 && cut.groupIndex < cut.groupTotal - 1) {
+            const gid = cut.groupId;
+            for (let i = count; i < questions.length; i++) {
+              if (questions[i].groupId === gid && questions[i].groupIndex === cut.groupTotal - 1) { endIdx = i + 1; break; }
+            }
+          }
+          out = questions.slice(0, endIdx);
+        }
+        return json(res, 200, { questions: out, batch: { id: bid, name: b.name, subject: bSubj } });
+      }
+      // 按材料内容自动分组：相同材料文本归为一组（≥2 题才分组；空材料不参与）
+      if (pathname === '/api/custom/questions/auto-group' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { batch_id } = JSON.parse(body || '{}');
+        const bid = Number(batch_id);
+        if (!bid) return err(res, 400, '缺少 batch_id');
+        const rows = pdb.prepare('SELECT id, material FROM custom_questions WHERE batch_id = ? ORDER BY id ASC').all(bid);
+        // 归一化：去 HTML 标签、去空白（避免字距空格/换行干扰指纹）
+        const norm = (s) => String(s || '').trim().replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+        const groups = new Map(); // norm -> [ids]
+        for (const r of rows) {
+          const key = norm(r.material);
+          if (!key) continue;
+          if (!groups.has(key)) groups.set(key, []);
+          groups.get(key).push(Number(r.id));
+        }
+        let grouped = 0, groupCount = 0;
+        const updates = [];
+        for (const [, ids] of groups) {
+          if (ids.length < 2) continue;
+          const gid = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+          // 每组用独立 gid（避免同批并行时碰撞——极端小概率也兜底）
+          updates.push({ ids, gid });
+        }
+        withTx(() => {
+          for (const { ids, gid } of updates) {
+            pdb.prepare(`UPDATE custom_questions SET material_id = ? WHERE id IN (${ids.map(() => '?').join(',')})`).run(gid, ...ids);
+            grouped += ids.length;
+            groupCount++;
+          }
+        });
+        return json(res, 200, { ok: true, grouped, groupCount, total: rows.length });
       }
       // 判分：复用 checkAnswer，写 practice_records（subject='自定义'，chapter=批次名）
       if (pathname === '/api/custom/check' && req.method === 'POST') {
@@ -1751,10 +2055,12 @@ const server = http.createServer(async (req, res) => {
         const bm = pdb.prepare('SELECT name, subject FROM custom_batches WHERE id = ?').get(Number(batchId || 0));
         const ch = chapter || (bm && bm.name) || '';
         const subj = (bm && (bm.subject || '').trim()) || '自定义';
+        // 自定义题归档固定归「自定义题库」（不分子模块）
+        // 注意：is_correct 用 result.ok（result.correct 是正确答案索引数组，恒 truthy，直接复用会把答错记成答对）
         pdb.prepare(`
-          INSERT INTO practice_records (question_id, paper_id, subject, chapter, question_type, selected, is_correct, cost_ms)
-          VALUES (?, NULL, ?, ?, 0, ?, ?, 0)
-        `).run(questionId, subj, ch, JSON.stringify(selected ?? null), result.correct == null ? null : (result.correct ? 1 : 0));
+          INSERT INTO practice_records (question_id, paper_id, subject, chapter, question_type, selected, is_correct, cost_ms, group_key, sub_key)
+          VALUES (?, NULL, ?, ?, 0, ?, ?, 0, 'custom', '')
+        `).run(questionId, subj, ch, JSON.stringify(selected ?? null), result.ok == null ? null : (result.ok ? 1 : 0));
         return json(res, 200, result);
       }
       // ---- 做题记录（practice.db，服务端跨设备同步） ----
@@ -1764,18 +2070,22 @@ const server = http.createServer(async (req, res) => {
         for await (const chunk of req) body += chunk;
         const { questionId, subject, chapter, type, selected, correct, costMs, paperId } = JSON.parse(body || '{}');
         if (questionId == null) return err(res, 400, '缺少 questionId');
+        // 来源归档：按题目真实来源算大模块/子模块（与错题本/收藏/笔记分组同口径），旧记录靠一键整理回填
+        const cls = classifySource(questionId);
         const r = pdb.prepare(`
-          INSERT INTO practice_records (question_id, paper_id, subject, chapter, question_type, selected, is_correct, cost_ms)
-          VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+          INSERT INTO practice_records (question_id, paper_id, subject, chapter, question_type, selected, is_correct, cost_ms, group_key, sub_key)
+          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `).run(
           questionId,
-          paperId ?? null,
+          paperId ?? cls.paperId ?? null,
           subject || '',
           chapter || '',
           type ?? 0,
           JSON.stringify(selected ?? null),
           correct == null ? null : (correct ? 1 : 0),
           costMs ?? 0,
+          cls.groupKey,
+          cls.subKey,
         );
         // 错题自动移除：客观题累计做对 3 次（按不同日期计，避免同日多次去重口径不一致）→ 错题记录软删除（archived=1，统计历史保留）
         // 只针对行测/职测客观题（错题本收录范围），主观题（correct=null）不参与
@@ -1837,20 +2147,28 @@ const server = http.createServer(async (req, res) => {
           daily,
         });
       }
+      // 分组总览（5 大模块 + 未分类，供错题本页面上方 tab / 子模块列表）
+      if (pathname === '/api/records/wrong/groups' && req.method === 'GET') {
+        const rows = pdb.prepare(`
+          SELECT group_key g, sub_key s, COUNT(*) c FROM practice_records
+          WHERE is_correct = 0 AND archived = 0 GROUP BY group_key, sub_key
+        `).all();
+        return json(res, 200, buildSourceGroups(rows));
+      }
       // 服务端错题本（跨设备同步；联表 tiku.db 取题目内容；archived 标记移除但保留历史）
       if (pathname === '/api/records/wrong' && req.method === 'GET') {
         const limit = Math.min(Math.max(Number(url.searchParams.get('limit') || 50), 1), 200);
         const offset = Math.max(Number(url.searchParams.get('offset') || 0), 0);
-        const subject = url.searchParams.get('subject');
-        // 错题本只收客观题（公考行测 / 事业编职测 / 自定义题库）；申论·综应等主观题（is_correct=null）天然不匹配
-        // 简写科目（自定义题库所选：行测/职测）与粉笔全名同属一个 Tab
-        const subjMatch = (subject || '').replace('公务员·行测', '行测').replace('事业编·职测', '职测');
-        const subjectCond = subjMatch ? 'AND (subject = ? OR subject = ?)' : "AND subject IN ('公务员·行测', '事业编·职测', '行测', '职测', '自定义')";
-        const subjParams = subjMatch ? [subjMatch, (subjMatch === '行测' ? '公务员·行测' : (subjMatch === '职测' ? '事业编·职测' : subjMatch))] : [];
-        const params = subjMatch ? [...subjParams, limit, offset] : [limit, offset];
+        // 来源归档过滤：group=大模块（''=未分类；不传=全部），sub=子模块（缺省=该大模块全部）
+        const hasGroup = url.searchParams.has('group');
+        const group = url.searchParams.get('group') ?? '';
+        const sub = url.searchParams.get('sub') ?? '';
+        const groupCond = hasGroup ? 'AND group_key = ?' : '';
+        const subCond = sub !== '' ? 'AND sub_key = ?' : '';
+        const params = hasGroup ? [group, ...(sub !== '' ? [sub] : []), limit, offset] : [limit, offset];
         const rows = pdb.prepare(`
           SELECT id, question_id, subject, chapter, selected, created_at
-          FROM practice_records WHERE is_correct = 0 AND archived = 0 ${subjectCond}
+          FROM practice_records WHERE is_correct = 0 AND archived = 0 ${groupCond} ${subCond}
           ORDER BY id DESC LIMIT ? OFFSET ?
         `).all(...params);
         const list = rows.map((r) => {
@@ -1858,8 +2176,8 @@ const server = http.createServer(async (req, res) => {
           if (String(r.question_id).startsWith('custom-')) {
             // 自定义题：题面从 custom_questions 取
             const cid = Number(String(r.question_id).replace(/^custom-/, ''));
-            const cr = pdb.prepare('SELECT prompt FROM custom_questions WHERE id = ?').get(cid);
-            if (cr) q = { content: cr.prompt, type: 'custom' };
+            const cr = pdb.prepare('SELECT prompt, images FROM custom_questions WHERE id = ?').get(cid);
+            if (cr) q = { content: cr.prompt + (parseImages(cr.images).length ? ' [图]' : ''), type: 'custom' };
           } else {
             q = qQuestionById.get(r.question_id);
           }
@@ -1878,19 +2196,53 @@ const server = http.createServer(async (req, res) => {
           };
         });
         // 返回总数（标题显示真实错题数）+ 分页游标，前端可"加载更多"
-        const total = pdb.prepare(`SELECT COUNT(*) n FROM practice_records WHERE is_correct = 0 AND archived = 0 ${subjectCond}`).get(...subjParams).n;
+        const total = pdb.prepare(`SELECT COUNT(*) n FROM practice_records WHERE is_correct = 0 AND archived = 0 ${groupCond} ${subCond}`).get(...(hasGroup ? [group, ...(sub !== '' ? [sub] : [])] : [])).n;
         return json(res, 200, { list, total, offset, limit, hasMore: offset + list.length < total });
       }
       // 清空错题（软删除：archived=1，统计历史保留；按 id 单条移除；questionId 按题移除；subject 指定时只清该模块）
       if (pathname === '/api/records/wrong' && req.method === 'DELETE') {
         let body = '';
         for await (const chunk of req) body += chunk;
-        const { id, questionId, subject } = JSON.parse(body || '{}');
+        const { id, questionId, subject, group } = JSON.parse(body || '{}');
         if (id) pdb.prepare('UPDATE practice_records SET archived = 1 WHERE id = ?').run(id);
         else if (questionId) pdb.prepare('UPDATE practice_records SET archived = 1 WHERE question_id = ? AND is_correct = 0 AND archived = 0').run(questionId);
+        else if (group != null) pdb.prepare('UPDATE practice_records SET archived = 1 WHERE group_key = ? AND is_correct = 0 AND archived = 0').run(group);
         else if (subject) pdb.prepare('UPDATE practice_records SET archived = 1 WHERE is_correct = 0 AND subject = ?').run(subject);
         else pdb.prepare('UPDATE practice_records SET archived = 1 WHERE is_correct = 0').run();
         return json(res, 200, { ok: true });
+      }
+      // 一键整理：错题本/收藏/笔记 全部按题目真实来源重新归档（幂等可重复；老用户历史数据回填 group_key/sub_key）
+      if (pathname === '/api/organize' && req.method === 'POST') {
+        let body = '';
+        for await (const chunk of req) body += chunk;
+        const { target } = JSON.parse(body || '{}');
+        const tables = {
+          wrong: { table: 'practice_records', where: ' WHERE is_correct = 0 AND archived = 0' },
+          favorites: { table: 'favorites', where: '' },
+          notes: { table: 'notes', where: '' },
+        };
+        const t = tables[target];
+        if (!t) return err(res, 400, 'target 应为 wrong / favorites / notes');
+        const rows = pdb.prepare(`SELECT id, question_id, group_key, sub_key FROM ${t.table}${t.where} ORDER BY id`).all();
+        const groupCount = new Map();
+        let fixed = 0;
+        const updates = [];
+        for (const r of rows) {
+          const c = classifySource(r.question_id);
+          const gk = c.groupKey ?? '';
+          const sk = c.subKey ?? '';
+          groupCount.set(gk, (groupCount.get(gk) || 0) + 1);
+          if (gk !== (r.group_key || '') || sk !== (r.sub_key || '')) {
+            updates.push([gk, sk, r.id]);
+            fixed++;
+          }
+        }
+        const upd = pdb.prepare(`UPDATE ${t.table} SET group_key = ?, sub_key = ? WHERE id = ?`);
+        withTx(() => { for (const [gk, sk, id] of updates) upd.run(gk, sk, id); });
+        const groups = [...groupCount.entries()]
+          .map(([key, count]) => ({ key, name: sourceGroupName(key), count }))
+          .sort((a, b) => SOURCE_GROUPS.findIndex((g) => g.key === a.key) - SOURCE_GROUPS.findIndex((g) => g.key === b.key));
+        return json(res, 200, { ok: true, target, total: rows.length, fixed, groups });
       }
       // 最近记录（答题历史）
       if (pathname === '/api/records/recent' && req.method === 'GET') {
@@ -2298,6 +2650,10 @@ const server = http.createServer(async (req, res) => {
           if (r.error) return json(res, 200, { notice: r.error, text: null });
           return json(res, 200, { notice: '解析完成', text: r.content });
         }
+        // 纯文本：空 key 快速失败（与图片分支一致；勿用空 key 调网关挂起 90s+）
+        if (!agent.api_key || !agent.base_url) {
+          return json(res, 200, { notice: '解析 AI 尚未配置 api_key，请到「AI 设置」页面填写后重试。', text: null });
+        }
         const r = await callAgent(agent, String(text));
         if (r.error) return json(res, 200, { notice: r.error, text: null });
         return json(res, 200, { notice: '解析完成', text: r.content });
@@ -2394,97 +2750,26 @@ const server = http.createServer(async (req, res) => {
             } catch {}
           }
         }
-        const prompt = `你是一名严格的申论/综应阅卷官，请按要点采分制批改。\n【题目要求】${q ? q.content : '(未提供题目)'}${fullScore ? `\n【满分】${fullScore} 分` : ''}${materialText ? `\n【给定材料】\n${materialText.slice(0, 8000)}\n` : '\n【注意】本题给定材料暂未关联，请基于题目要求评卷，并在结论中说明这一点。'}【用户作答】${content || '(空)'}\n\n请严格按以下格式输出批改结果：\n【总分】X/${fullScore || '满分'} 分\n【评分明细】逐条列出得分点与失分点（结合给定材料核对要点）\n【优点】2-3 条\n【不足】2-3 条，指出与题目要求及材料要点的差距\n【修改建议】具体、可操作的改进意见（针对内容、结构、语言）\n【参考思路】简要给出本题的答题思路/要点方向\n语言专业、中肯，面向备考学生。`;
+        const prompt = `你是一名严格的申论/综应阅卷官，请按要点采分制批改。\n【题目要求】${q ? q.content : '(未提供题目)'}${fullScore ? `\n【满分】${fullScore} 分` : ''}${materialText ? `\n【给定材料】\n${materialText.slice(0, 8000)}\n` : '\n【注意】本题给定材料暂未关联，请基于题目要求评卷，并在结论中说明这一点。'}【用户作答】${content || '(空)'}\n\n评分必须按【满分】口径（禁止按 100 分制），先定档再给分（小题一档顶格 90%、大作文一类文顶格 80%）；不得编造考试统计、考场数据或题目出处；无官方评分细则时不得声称"漏某点固定扣 X 分"。\n\n请严格按以下格式输出批改结果：\n【总分】X/${fullScore || '满分'} 分\n【评分明细】逐条列出得分点与失分点（结合给定材料核对要点）\n【优点】2-3 条\n【不足】2-3 条，指出与题目要求及材料要点的差距\n【修改建议】具体、可操作的改进意见（针对内容、结构、语言）\n【参考思路】简要给出本题的答题思路/要点方向\n语言专业、中肯，面向备考学生。`;
         const r = await callAgent(agent, prompt);
         // 批改记录落库（主观题 is_correct=NULL，计入做题数但不计正确率）
         if (questionId && q) {
           try {
             const p = db.prepare('SELECT subjectName FROM papers WHERE id = ?').get(q.paperId);
+            const cg = classifySource(questionId);
             pdb.prepare(`
-              INSERT INTO practice_records (question_id, paper_id, subject, chapter, question_type, selected, is_correct, cost_ms)
-              VALUES (?, ?, ?, ?, ?, ?, NULL, 0)
-            `).run(questionId, q.paperId, p?.subjectName || '', q.chapter || '', q.type, JSON.stringify({ answer: content }));
+              INSERT INTO practice_records (question_id, paper_id, subject, chapter, question_type, selected, is_correct, cost_ms, group_key, sub_key)
+              VALUES (?, ?, ?, ?, ?, ?, NULL, 0, ?, ?)
+            `).run(questionId, q.paperId, p?.subjectName || '', q.chapter || '', q.type, JSON.stringify({ answer: content }), cg.groupKey, cg.subKey);
           } catch { /* 落库失败不影响批改 */ }
         }
         if (r.error) return json(res, 200, { notice: r.error, score: null });
         return json(res, 200, { notice: '批改完成', score: null, result: r.content, fullScore });
       }
-      // ---- 使用统计：接收埋点上报（带 CORS：App 离线模式跨域直报；事件 ts 为发生时原始时间戳） ----
-      if (pathname === '/api/telemetry') {
-        console.log(`[telemetry] 收到请求: ${req.method} ${req.url} from ${req.socket.remoteAddress || 'unknown'}`);
-        const cors = { 'Access-Control-Allow-Origin': '*', 'Access-Control-Allow-Methods': 'POST, OPTIONS', 'Access-Control-Allow-Headers': 'Content-Type' };
-        if (req.method === 'OPTIONS') { res.writeHead(204, cors); return res.end(); }
-        if (req.method !== 'POST') return err(res, 405, 'method not allowed');
-        let raw = '';
-        for await (const chunk of req) raw += chunk;
-        let body = {};
-        try { body = JSON.parse(raw || '{}'); } catch { return err(res, 400, 'bad json'); }
-        const events = Array.isArray(body.events) ? body.events : (body.event ? [body] : []);
-        console.log(`[telemetry] 事件数=${events.length} 首个=${events[0] ? events[0].event + '/' + String(events[0].install_id || '').slice(0, 8) : '无'}`);
-        const stmt = sdb.prepare('INSERT INTO telemetry_events (install_id, event, ts, data) VALUES (?, ?, ?, ?)');
-        let saved = 0;
-        for (const ev of events) {
-          const id = String(ev.install_id || '').slice(0, 64);
-          const name = String(ev.event || '').slice(0, 64);
-          const ts = Number(ev.ts);
-          if (!id || !name || !Number.isFinite(ts)) continue;
-          stmt.run(id, name, Math.floor(ts), JSON.stringify(ev.data ?? {}).slice(0, 2000));
-          saved++;
-        }
-        res.writeHead(200, { 'Content-Type': 'application/json; charset=utf-8', ...cors });
-        return res.end(JSON.stringify({ ok: true, saved }));
-      }
       return err(res, 404, '接口不存在');
     } catch (e) {
       return err(res, 500, `服务器错误: ${e.message}`);
     }
-  }
-
-  // ---- 使用统计管理页（纯 HTML 自包含；访问 http://<host>:<port>/stats） ----
-  if (pathname === '/stats' && req.method === 'GET') {
-    const dayStart = () => { const d = new Date(); d.setHours(0, 0, 0, 0); return d.getTime(); };
-    const todayTs = dayStart();
-    const monthTs = (() => { const d = new Date(todayTs); d.setDate(1); return d.getTime(); })();
-    // 排除测试设备（install_id 以 test- 开头），避免自测数据污染统计
-    const NOT_TEST = "install_id NOT LIKE 'test-%'";
-    const totalUsers = sdb.prepare(`SELECT COUNT(DISTINCT install_id) c FROM telemetry_events WHERE ${NOT_TEST}`).get().c;
-    const dau = sdb.prepare(`SELECT COUNT(DISTINCT install_id) c FROM telemetry_events WHERE ts >= ? AND ${NOT_TEST}`).get(todayTs).c;
-    const mau = sdb.prepare(`SELECT COUNT(DISTINCT install_id) c FROM telemetry_events WHERE ts >= ? AND ${NOT_TEST}`).get(monthTs).c;
-    const totalEvents = sdb.prepare(`SELECT COUNT(*) c FROM telemetry_events WHERE ${NOT_TEST}`).get().c;
-    const last7 = sdb.prepare(`SELECT date(ts/1000,'unixepoch','localtime') d, COUNT(DISTINCT install_id) u, COUNT(*) n FROM telemetry_events WHERE ts >= ? AND ${NOT_TEST} GROUP BY d ORDER BY d`).all(Date.now() - 6 * 86400000);
-    const byEvent = sdb.prepare(`SELECT event, COUNT(*) n, COUNT(DISTINCT install_id) u FROM telemetry_events WHERE ${NOT_TEST} GROUP BY event ORDER BY n DESC`).all();
-    const recent = sdb.prepare(`SELECT install_id, event, ts, data FROM telemetry_events WHERE ${NOT_TEST} ORDER BY id DESC LIMIT 30`).all();
-    const escH = (s) => String(s ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-    const rows7 = last7.map((r) => `<tr><td>${escH(r.d)}</td><td>${r.u}</td><td>${r.n}</td></tr>`).join('') || '<tr><td colspan="3" style="color:#999">暂无数据</td></tr>';
-    const rowsE = byEvent.map((r) => `<tr><td>${escH(r.event)}</td><td>${r.n}</td><td>${r.u}</td></tr>`).join('') || '<tr><td colspan="3" style="color:#999">暂无数据</td></tr>';
-    const rowsR = recent.map((r) => `<tr><td title="${escH(r.install_id)}">${escH(r.install_id.slice(0, 8))}…</td><td>${escH(r.event)}</td><td>${new Date(r.ts).toLocaleString('zh-CN')}</td><td>${escH(JSON.stringify(JSON.parse(r.data || '{}'))).slice(0, 80)}</td></tr>`).join('');
-    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    return res.end(`<!DOCTYPE html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>使用统计 · 考公刷题</title><style>
-      body{font-family:system-ui,-apple-system,'Microsoft YaHei',sans-serif;background:#0f172a;color:#e2e8f0;margin:0;padding:24px}
-      h1{font-size:20px;margin:0 0 4px}h2{font-size:15px;margin:28px 0 10px;color:#94a3b8}
-      .sub{color:#64748b;font-size:13px;margin-bottom:16px}
-      .cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:12px}
-      .card{background:#1e293b;border:1px solid #334155;border-radius:10px;padding:16px}
-      .card .v{font-size:26px;font-weight:700;color:#38bdf8}.card .k{font-size:12px;color:#94a3b8;margin-top:4px}
-      table{width:100%;border-collapse:collapse;font-size:13px;background:#1e293b;border-radius:10px;overflow:hidden}
-      th,td{padding:8px 12px;text-align:left;border-bottom:1px solid #334155}th{color:#94a3b8;font-weight:500;background:#24344d}
-      tr:last-child td{border-bottom:none}
-    </style></head><body>
-      <h1>📊 使用统计</h1>
-      <div class="sub">数据从统计功能部署日起累计；人数 = 去重设备 ID（install_id），同一手机/浏览器只算 1 人</div>
-      <div class="cards">
-        <div class="card"><div class="v">${totalUsers}</div><div class="k">累计使用人数</div></div>
-        <div class="card"><div class="v">${dau}</div><div class="k">今日活跃 DAU</div></div>
-        <div class="card"><div class="v">${mau}</div><div class="k">本月活跃 MAU</div></div>
-        <div class="card"><div class="v">${totalEvents}</div><div class="k">累计事件数</div></div>
-      </div>
-      <h2>近 7 天活跃趋势</h2>
-      <table><tr><th>日期</th><th>活跃人数</th><th>事件数</th></tr>${rows7}</table>
-      <h2>事件排行（功能使用量）</h2>
-      <table><tr><th>事件</th><th>次数</th><th>人数</th></tr>${rowsE}</table>
-      <h2>最近事件流水</h2>
-      <table><tr><th>设备</th><th>事件</th><th>时间</th><th>附加数据</th></tr>${rowsR}</table>
-    </body></html>`);
   }
 
   // ---- 静态文件 ----

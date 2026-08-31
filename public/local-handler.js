@@ -4,6 +4,46 @@
 // 返回结构与 server.mjs 完全对齐，app.js 零改动。
 
 import { checkAnswer } from './lib/local-queries.js';
+import { customQuestionHtml, parseImages } from './lib/custom-parser.js';
+
+/**
+ * 自定义题材料分组组装（与 server.mjs groupCustomPracticeRows 同构，双端同步维护）：
+ * 同一 material_id 的题归为一组（组内按 id 升序、整组连续），组内共用第一份材料，标记 groupId/groupIndex/groupTotal。
+ */
+function groupCustomPracticeRows(rows, mapper) {
+  const byId = new Map(rows.map((r) => [String(r.id), r]));
+  const groups = new Map();
+  const order = [];
+  for (const r of rows) {
+    const gid = String(r.material_id || '').trim();
+    if (!gid) { order.push('q:' + r.id); continue; }
+    if (!groups.has(gid)) { groups.set(gid, []); order.push('g:' + gid); }
+    groups.get(gid).push(r);
+  }
+  const out = [];
+  for (const key of order) {
+    if (key.startsWith('q:')) {
+      const r = byId.get(key.slice(2));
+      if (r) out.push(mapper(r));
+      continue;
+    }
+    const gid = key.slice(2);
+    const members = groups.get(gid);
+    const holder = members.find((m) => String(m.material || '').trim()) || members[0];
+    const holderMatImgs = parseImages(holder.images).filter((im) => im.role === 'material');
+    const holderHtml = customQuestionHtml({ ...holder, images: holderMatImgs }).materialHtml;
+    members.forEach((m, i) => {
+      const q = mapper(m);
+      q.material = String(holder.material || '').trim();
+      q.materialHtml = holderHtml;
+      q.groupId = gid;
+      q.groupIndex = i;
+      q.groupTotal = members.length;
+      out.push(q);
+    });
+  }
+  return out;
+}
 
 export function createLocalHandler({ query, records, store, ai }) {
   /** 聚合统计（与 server /api/records/stats 同构：total/correct/wrong/rate/byChapter/last7/daily） */
@@ -112,7 +152,8 @@ export function createLocalHandler({ query, records, store, ai }) {
         if (!cr) throw new Error('题目不存在');
         const batches = await store.getAll('custom_batches');
         const b = batches.find((x) => Number(x.id) === Number(cr.batch_id)) || {};
-        return { questionId: raw, id: raw, type: 'custom', content: cr.prompt, contentHtml: cr.prompt, material: cr.material || '', options: cr.options || [], answer: cr.answer || '', answerIndex: cr.answer_index ?? -1, analysis: cr.analysis || '', subject: String(b.subject || '').trim() || '自定义', chapter: b.name || '' };
+        const { contentHtml, materialHtml } = customQuestionHtml({ ...cr, images: parseImages(cr.images) });
+        return { questionId: raw, id: raw, type: 'custom', content: cr.prompt, contentHtml, material: cr.material || '', materialHtml, options: cr.options || [], answer: cr.answer || '', answerIndex: cr.answer_index ?? -1, analysis: cr.analysis || '', subject: String(b.subject || '').trim() || '自定义', chapter: b.name || '' };
       }
       return query.questionById(qs.get('id'));
     }
@@ -148,9 +189,15 @@ export function createLocalHandler({ query, records, store, ai }) {
       });
     }
     if (route === 'GET /records/recent') return records.recent({ limit: Number(qs.get('limit') || 20) });
-    if (route === 'GET /records/wrong') return records.wrong({ limit: Number(qs.get('limit') || 50), offset: Number(qs.get('offset') || 0), subject: qs.get('subject') || undefined });
+    // 来源分组总览（5 大模块 + 未分类）
+    if (route === 'GET /records/wrong/groups') return records.groups('wrong');
+    if (route === 'GET /favorites/groups') return records.groups('favorites');
+    if (route === 'GET /notes/groups') return records.groups('notes');
+    // 一键整理：历史未分类题按真实来源自动归类（幂等，可重复执行）
+    if (route === 'POST /organize') return records.organize((body || {}).target);
+    if (route === 'GET /records/wrong') return records.wrong({ limit: Number(qs.get('limit') || 50), offset: Number(qs.get('offset') || 0), group: qs.has('group') ? (qs.get('group') || '') : undefined, sub: qs.get('sub') || undefined });
     if (route === 'DELETE /records/wrong') {
-      // 与 server 同构：body.id 存在时只删单条；body.questionId 按题删；body.subject 指定时只清该模块；否则清空错题本
+      // 与 server 同构：body.id 存在时只删单条；body.questionId 按题删；body.group 指定时只清该大模块；body.subject 兼容旧调用；否则清空错题本
       // 注意：只删除错题记录（is_correct = 0），保留正确题记录与学习统计
       if (body && body.id != null) {
         await store.deleteBy('records', 'id', body.id);
@@ -158,13 +205,19 @@ export function createLocalHandler({ query, records, store, ai }) {
       }
       const all = await store.getAll('records');
       for (const r of all) {
-        if (!r.is_correct && (!body?.questionId || r.question_id === body.questionId) && (!body?.subject || r.subject === body.subject)) await store.deleteBy('records', 'id', r.id);
+        if (!r.is_correct && (!body?.questionId || r.question_id === body.questionId)
+          && (body?.group == null || (r.group_key || '') === body.group)
+          && (!body?.subject || r.subject === body.subject)) await store.deleteBy('records', 'id', r.id);
       }
       return { ok: true };
     }
-    if (route === 'GET /favorites') return records.favorites({ limit: Number(qs.get('limit') || 50), offset: Number(qs.get('offset') || 0) });
+    if (route === 'GET /favorites') return records.favorites({ limit: Number(qs.get('limit') || 50), offset: Number(qs.get('offset') || 0), group: qs.has('group') ? (qs.get('group') || '') : undefined, sub: qs.get('sub') || undefined });
     if (route === 'POST /favorites') return records.toggleFavorite(body.questionId, { subject: body.subject, chapter: body.chapter });
     if (route === 'DELETE /favorites') return records.toggleFavorite(body.questionId);
+    // 笔记（与 server.mjs /api/notes 同构）
+    if (route === 'GET /notes') return records.notes({ limit: Number(qs.get('limit') || 50), offset: Number(qs.get('offset') || 0), qid: qs.get('qid'), group: qs.has('group') ? (qs.get('group') || '') : undefined, sub: qs.get('sub') || undefined });
+    if (route === 'POST /notes') return records.upsertNote(body.questionId, { subject: body.subject, chapter: body.chapter, note: body.note });
+    if (route === 'DELETE /notes') return records.deleteNote(body.questionId);
 
     // ---------- AI ----------
     if (route === 'GET /ai/material') return ai.material(qs.get('paperId'));
@@ -178,7 +231,7 @@ export function createLocalHandler({ query, records, store, ai }) {
       // 前端传 {questionId, content}，ai.grade 读 answer → 转换参数
       const r = await ai.grade({ ...body, answer: body.content });
       if (r.error) return { notice: r.error, score: null };
-      return { notice: '批改完成', score: null, result: r.content, fullScore: null };
+      return { notice: '批改完成', score: null, result: r.content, fullScore: r.fullScore || null };
     }
     if (route === 'POST /ai/explain') {
       const r = await ai.explain(body);
@@ -219,25 +272,36 @@ export function createLocalHandler({ query, records, store, ai }) {
     if (skillDel) return ai.deleteSkill(decodeURIComponent(skillDel[1]));
 
     // ---------- 自定义题库（2026-08-15，IndexedDB：custom_batches / custom_questions） ----------
-    // 导入：建批次 + 批量插题
+    // 导入：建批次 + 批量插题。本地 IndexedDB 逐题串行写，大题库慢：
+    // 预分配自增 id（只扫一次全表，逐题 nextId 是 O(N²)），按批回调进度并让出事件循环，进度条才能重绘。
     if (route === 'POST /custom/import') {
       if (!body.name || !Array.isArray(body.questions) || body.questions.length === 0) throw new Error('缺少批次名或题目');
       const bid = await store.nextId('custom_batches');
       const subject = String(body.subject || '').trim() || '自定义';
       await store.put('custom_batches', { id: bid, name: String(body.name).trim(), subject, created_at: new Date().toLocaleString('zh-CN', { hour12: false }).replace(/\//g, '-'), updated_at: '' });
-      for (const q of body.questions) {
-        const qid = await store.nextId('custom_questions');
+      const onProgress = typeof opts.onProgress === 'function' ? opts.onProgress : null;
+      const qs = body.questions;
+      let qid = await store.nextId('custom_questions'); // 顺序自增与逐题 nextId 结果一致
+      const CHUNK = 40;
+      for (let i = 0; i < qs.length; i++) {
         await store.put('custom_questions', {
-          id: qid, batch_id: bid,
-          prompt: String(q.prompt ?? '').trim(),
-          material: String(q.material ?? ''),
-          options: Array.isArray(q.options) ? q.options : [],
-          answer: String(q.answer ?? ''),
-          answer_index: q.answer_index == null ? -1 : Number(q.answer_index),
-          analysis: String(q.analysis ?? ''),
+          id: qid++, batch_id: bid,
+          prompt: String(qs[i].prompt ?? '').trim(),
+          material: String(qs[i].material ?? ''),
+          options: Array.isArray(qs[i].options) ? qs[i].options : [],
+          answer: String(qs[i].answer ?? ''),
+          answer_index: qs[i].answer_index == null ? -1 : Number(qs[i].answer_index),
+          analysis: String(qs[i].analysis ?? ''),
+          category: String(qs[i].category ?? '').trim(),
+          images: Array.isArray(qs[i].images) ? qs[i].images : [],
+          material_id: String(qs[i].material_id ?? ''),
         });
+        if (onProgress && ((i + 1) % CHUNK === 0 || i === qs.length - 1)) {
+          await new Promise((r) => setTimeout(r, 0)); // 让出事件循环，界面进度条才能重绘
+          onProgress(i + 1, qs.length);
+        }
       }
-      return { id: bid, name: String(body.name).trim(), subject, count: body.questions.length };
+      return { id: bid, name: String(body.name).trim(), subject, count: qs.length };
     }
     // 批次列表（含题数）
     if (route === 'GET /custom/batches') {
@@ -329,6 +393,9 @@ export function createLocalHandler({ query, records, store, ai }) {
         answer: String(body.answer ?? ''),
         answer_index: body.answer_index == null ? -1 : Number(body.answer_index),
         analysis: String(body.analysis ?? ''),
+        category: String(body.category ?? '').trim(),
+        images: Array.isArray(body.images) ? body.images : (q.images || []),
+        ...(Object.prototype.hasOwnProperty.call(body, 'material_id') ? { material_id: String(body.material_id ?? '') } : {}),
       });
       return { ok: true };
     }
@@ -338,6 +405,48 @@ export function createLocalHandler({ query, records, store, ai }) {
       if (!qid) throw new Error('缺少 id');
       await store.deleteBy('custom_questions', 'id', qid);
       return { ok: true };
+    }
+    // 材料分组/取消分组：同一 material_id 的题刷题时共用一份材料（显示 第 n/m 小问）
+    if (route === 'POST /custom/questions/group') {
+      const ids = (Array.isArray(body.ids) ? body.ids : []).map(Number).filter(Boolean);
+      if (!ids.length) throw new Error('请先勾选题目');
+      const all = await store.getAll('custom_questions');
+      const hits = all.filter((x) => ids.includes(Number(x.id)));
+      if (hits.length !== ids.length) throw new Error('部分题目不存在');
+      if (body.action === 'ungroup') {
+        for (const q of hits) await store.put('custom_questions', { ...q, material_id: '' });
+        return { ok: true, action: 'ungroup', count: hits.length };
+      }
+      const gid = String(body.groupId || '').trim() || ('g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7));
+      for (const q of hits) await store.put('custom_questions', { ...q, material_id: gid });
+      return { ok: true, action: 'group', groupId: gid, count: hits.length };
+    }
+    // 按材料内容自动分组：相同材料文本归为一组（≥2 题才分组；空材料不参与）
+    if (route === 'POST /custom/questions/auto-group') {
+      const bid = Number(body.batch_id);
+      if (!bid) throw new Error('缺少 batch_id');
+      const all = await store.getAll('custom_questions');
+      const rows = all.filter((q) => Number(q.batch_id) === bid).sort((a, b) => Number(a.id) - Number(b.id));
+      const norm = (s) => String(s || '').trim().replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim();
+      const groups = new Map();
+      for (const r of rows) {
+        const key = norm(r.material);
+        if (!key) continue;
+        if (!groups.has(key)) groups.set(key, []);
+        groups.get(key).push(Number(r.id));
+      }
+      let grouped = 0, groupCount = 0;
+      for (const [, ids] of groups) {
+        if (ids.length < 2) continue;
+        const gid = 'g' + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
+        for (const id of ids) {
+          const q = rows.find((x) => Number(x.id) === id);
+          if (q) await store.put('custom_questions', { ...q, material_id: gid });
+        }
+        grouped += ids.length;
+        groupCount++;
+      }
+      return { ok: true, grouped, groupCount, total: rows.length };
     }
     // 出题（刷题）：字段映射成粉笔结构
     if (route === 'GET /custom/practice') {
@@ -349,21 +458,39 @@ export function createLocalHandler({ query, records, store, ai }) {
       const bSubj = String(b.subject || '').trim() || '自定义';
       const all = await store.getAll('custom_questions');
       const rows = all.filter((q) => Number(q.batch_id) === bid).sort((a, b) => Number(a.id) - Number(b.id));
-      const questions = rows.map((r) => ({
-        id: `custom-${r.id}`,
-        questionId: `custom-${r.id}`,
-        content: r.prompt,
-        material: r.material || '',
-        options: r.options || [],
-        answer: r.answer || '',
-        answerIndex: r.answer_index ?? -1,
-        analysis: r.analysis || '',
-        type: 'custom',
-        subjectName: bSubj,
-        batchId: bid,
-        chapter: b.name,
-      }));
-      return { questions, batch: { id: bid, name: b.name, subject: bSubj } };
+      const count = Math.max(0, Math.min(Number(qs.get('count') || 0), 100));
+      const questions = groupCustomPracticeRows(rows, (r) => {
+        const { contentHtml, materialHtml } = customQuestionHtml({ ...r, images: parseImages(r.images) });
+        return {
+          id: `custom-${r.id}`,
+          questionId: `custom-${r.id}`,
+          content: r.prompt,
+          contentHtml,
+          material: r.material || '',
+          materialHtml,
+          options: r.options || [],
+          answer: r.answer || '',
+          answerIndex: r.answer_index ?? -1,
+          analysis: r.analysis || '',
+          type: 'custom',
+          subjectName: bSubj,
+          batchId: bid,
+          chapter: b.name,
+        };
+      });
+      let out = questions;
+      if (count > 0 && questions.length > count) {
+        const cut = questions[count - 1];
+        let endIdx = count;
+        if (cut.groupTotal && cut.groupIndex > 0 && cut.groupIndex < cut.groupTotal - 1) {
+          const gid = cut.groupId;
+          for (let i = count; i < questions.length; i++) {
+            if (questions[i].groupId === gid && questions[i].groupIndex === cut.groupTotal - 1) { endIdx = i + 1; break; }
+          }
+        }
+        out = questions.slice(0, endIdx);
+      }
+      return { questions: out, batch: { id: bid, name: b.name, subject: bSubj } };
     }
     // 判分（自定义）：复用 checkAnswer，写 records（subject=自定义，chapter=批次名）
     if (route === 'POST /custom/check') {

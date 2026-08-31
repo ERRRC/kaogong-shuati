@@ -230,8 +230,8 @@ async function callVisionLocal(agent, imageDataUrl, mode = 'ocr', request) {
   const url = String(agent.base_url).replace(/\/+$/, '') + '/chat/completions';
   const text = mode === 'ocr'
     ? '这是一张考生手写或打印的答题纸图片。请逐字准确转写图片中的全部作答文字（包括标点、数字、段落换行）。要求：1) 手写潦草处根据上下文合理推断；2) 不要修改、润色或添加任何内容；3) 只输出识别出的原文，不要任何解释或标记。'
-    : mode === 'structure'
-    ? '这是一张考公题目图片（试卷/练习册/资料截图，可能包含一道或多道题，也可能混有笔记、页码等非题目内容）。请仔细观察整张图片：先筛选出真正的题目（过滤笔记、说明、考情、页眉页脚、页码等非题目内容；拿不准但疑似题目的保留），再把每道题整理为结构化 JSON，只输出 JSON，不要任何其他文字、解释或 Markdown 代码块：\n{"questions":[{"prompt":"题干","material":"材料（材料题才有的背景材料；没有则为空字符串）","options":["选项文本1","选项文本2"],"answer":"答案原文（如 A / AB / 正确；没有则为空字符串）","analysis":"解析（没有则为空字符串）"}]}\n要求：忠实图片内容，不编造、不补全缺失信息；一道题一个对象；同一材料下有多道小题时，每道小题的 material 都填同一材料；选项顺序与图片一致；判断题没有选项时 options 留空数组；OCR 转写造成的错别字尽量按常识修正，无法确认的保留原文。'
+: mode === 'structure'
+	    ? '这是一张考公题目图片（试卷/练习册/资料截图，可能包含一道或多道题，也可能混有笔记、页码、答题App界面元素等非题目内容）。\n\n请仔细观察整张图片，先筛选出真正的题目，再每道题整理为结构化 JSON。\n\n## 一、题型识别\n\n### 1. 图形推理题\n- 题干：引导语如「从所给的四个选项中，选择最合适的一个填入问号处」「左图为给定的多面体」「左边给定的是正方体的外表面展开图」「把下面的六个图形分为两类」等\n- 选项：\n  - 普通图推 → 图片中选项是图形，无法转写文字时写 {"A. A", "B. B", "C. C", "D. D"}\n  - 分类题（题干含「把下面的六个图形分为两类」）→ 选项是编号文字，原样保留如 "A. ①②④，③⑤⑥"\n- prompt 只放引导语原文，不要描述图形内容\n\n### 2. 定义判断题\n- 题干：一段概念定义 + 问题「根据上述定义，下列…」「以下符合…的是」「以下不属于…的是」\n- 选项：4 个完整的事例描述，逐字转写\n\n### 3. 逻辑判断题\n- 题干：一段论述 + 问题\n- 选项：4 个完整推理\n\n### 4. 判断题（对错题）\n- 选项固定为 ["正确", "错误"]\n- answer 为"正确"或"错误"\n\n### 5. 材料题（资料分析/一拖五）\n- 题干前有材料（图表或文字），材料文字摘要放入 material 字段\n- 每道小题独立一条记录，每条的 material 都填同一材料\n\n## 二、输出格式\n{"questions":[{"prompt":"题干","material":"材料（没有则为空字符串）","options":["A. 选项1","B. 选项2"],"answer":"答案字母，单选如 A / 多选如 ABD / 判断如 正确；图片未显示答案则留空","analysis":"解析（没有则为空字符串）","category":"题目分类（言语理解/判断推理/数量关系/资料分析/常识判断/申论/综应；不确定则留空）"}]}\n\n## 三、要求\n1) 忠实图片内容，不编造、不补全缺失信息；一道题一个对象\n2) 图形推理题选项为占位符 "A. A" "B. B" "C. C" "D. D"，不要编造图形文字\n3) 分类题选项完整保留编号文字，如 "A. ①②④，③⑤⑥"\n4) 材料题的图表文字尽量准确转写进 material\n5) answer 只能从图片中明确标注的答案信息提取；图片未显示答案时必须留空字符串，禁止自行计算\n6) 判断图片中题目的类别并填入 category 字段\n7) 过滤噪音：页码、标题、答题按钮、统计行等非题目内容\n8) 只输出一个 JSON，不要任何其他文字、解释、Markdown 代码块或思考过程'
     : '这是一道考公题目的图片（可能包含题干图形序列和 A/B/C/D 选项图形）。请逐一详细转写图片中的全部内容：题干部分描述每个图形的形状/线条/数量/位置/规律；选项部分标注 A/B/C/D 对应关系。不要遗漏任何图形或文字。';
   const body = {
     model: agent.model,
@@ -403,9 +403,9 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
   if (!Array.isArray(defaults) || !defaults.length) {
     defaults = [
       { id: 1, name: '行测解析 AI', role: 'xingce-explainer', description: '行测/职测选择题解析', system_prompt: '你是一名资深公务员考试行测讲师。请解析用户发来的行测选择题：给出考点、正确项解析、错误项排除、解题技巧。', skill: 'gongkao-huasheng13', base_url: 'https://opencode.ai/zen/v1', api_key: '', model: 'deepseek-v4-flash-free', temperature: 0.3, max_tokens: 4000, enabled: 0 },
-      { id: 2, name: '申论批改 AI', role: 'shenlun-grader', description: '申论/综应主观题批改', system_prompt: '你是一名申论阅卷官。请对用户的作答按要点采分制评分（满分100），给出评分、参考答案要点、丢分原因、改进建议。', skill: 'shenlun-master', base_url: 'https://opencode.ai/zen/v1', api_key: '', model: 'deepseek-v4-flash-free', temperature: 0.4, max_tokens: 2000, enabled: 0 },
+      { id: 2, name: '申论批改 AI', role: 'shenlun-grader', description: '申论/综应主观题批改', system_prompt: '你是一名严格的公务员考试申论阅卷官，熟悉国考/省考申论评分标准（要点采分制、先定档再给分）。\n\n任务：用户会发来一道申论题（含题目要求、满分、给定材料、用户作答）。请先列出本题应有的【参考答案要点】，再逐点核对用户作答，严格按下方评分规则与输出格式批改。\n\n【评分规则（必须严格执行）】\n1. 满分口径：以用户消息中的【满分】为准，按该分值评分；未提供满分的题才按 100 分诊断尺度评。字数限制（如"不超过 300 字"）不是满分，不得当作满分，也不得默认按 100 分制。\n2. 先定档再给分（分数取整数，任何情况都不得给出满分）：\n   - 小题五档（按满分缩放）：一档=要点基本全覆盖、展开充分、贴合材料、结构语言规范（满分的 80%–90%，顶格 90%）；二档=核心要点基本齐全、少量遗漏、部分展开不足（60%–80%）；三档=覆盖部分方向、大多停留在概括层、遗漏明显（40%–60%）；四档=有效要点少、内容空洞、契合度低（20%–40%）；五档=大面积空白、严重跑题（0%–20%）。\n   - 大作文（文章写作）：先定档再给分，一类文顶格为满分的 80%（40 分题≤32、35 分题≤28）；跑题/偏题压到四类文及以下；大段照抄材料（>30%）按抄袭降档；少于 800 字降档。\n3. 逐点采分（小题）：得分点只能来自给定材料；完整覆盖/等义表达按 100% 计入，部分覆盖按 50% 计入，未覆盖 0 分；展开度分档：充分展开 100% / 基本展开 85% / 简略提及 65% / 仅列标题 35%；只写"加强宣传"这类总括词而无具体做法，不得按完整覆盖计分；前置概括词、序号本身不独立计分，缺失也不单独扣分。\n4. 置信区间：给出建议分的同时给区间（中心 ± 满分的 5%–10%）；无官方参考答案时用中/低置信度并提示。\n5. 禁止虚构：未提供官方评分细则时，不得声称"漏某点固定扣 X 分"；不得编造或引用任何考试平均分、得分率、考场/阅卷统计；不得虚构题目出处（年份、试卷、题号）；无法确证的信息如实说明，不得猜测填充。\n\n【输出格式】\n【评分】X/满分（几档）\n【评分明细】逐条列出命中/遗漏的得分点，结合给定材料核对，注明覆盖状态与展开度\n【优点】2-3 条\n【不足】2-3 条\n【修改建议】3 条具体可执行\n【参考思路】简要的答题思路/要点方向\n\n要求：严格公正，不无原则鼓励；建议要具体可落地。', skill: 'shenlun-master', base_url: 'https://opencode.ai/zen/v1', api_key: '', model: 'deepseek-v4-flash-free', temperature: 0.4, max_tokens: 12000, enabled: 0 },
       { id: 4, name: '识图转写员', role: 'image-reader', description: '多模态识图：图形/图表/公式图 + 申论综应手写作答图转写', system_prompt: '你是一名图像识别转写助手。请把图片内容完整准确地转写成文字：图形描述形状数量位置旋转颜色规律，图表描述行列标题数据坐标轴图例趋势，公式文字图完整抄录，手写作答逐字转写保留格式不修正错别字（辨识不清用【？】标注）。只输出转写文本。', skill: '', base_url: '', api_key: '', model: 'GLM-4.1V-Thinking-Flash', temperature: 0.1, max_tokens: 2000, enabled: 0 },
-      { id: 6, name: '题目解析员', role: 'custom-question-parser', description: '自定义题库导入：筛选并整理题目为结构化 JSON', system_prompt: '你是一名公务员考试题目整理助手。请把题目原始文本（可能混有笔记/说明等非题内容）先筛选出真正的题目，再整理为 JSON：{"questions":[{"prompt":"题干","material":"材料","options":["选项1","选项2"],"answer":"答案","analysis":"解析"}]}。过滤非题内容，忠实原文不编造，没有的字段留空，只输出 JSON。', skill: '', base_url: '', api_key: '', model: 'GLM-4.1V-Thinking-Flash', temperature: 0.1, max_tokens: 4000, enabled: 0 },
+      { id: 6, name: '题目解析员', role: 'custom-question-parser', description: '自定义题库导入：筛选并整理题目为结构化 JSON', system_prompt: '你是一名公务员考试题目整理助手。用户会发来一段提取自 PDF/Word/TXT/Excel 或图片 OCR 的题目原始文本，里面混合了题目、季节标题、页码、统计行、分隔线、答案区、解析区等杂乱内容。\n\n任务：先筛选出真正的题目，再按标准字段整理为 JSON。\n\n## 一、题型结构与识别规则\n\n### 1. 图形推理题\n- 题干：通常是引导语，如「从所给的四个选项中，选择最合适的一个填入问号处」「左图为给定的多面体」「左边给定的是正方体的外表面展开图」「把下面的六个图形分为两类」等\n- 选项：\n  - 普通图推 → 选项为占位字母，写为 {"A. A", "B. B", "C. C", "D. D"}\n  - 分类题（题干含「把下面的六个图形分为两类」）→ 选项原样保留，如 "A. ①②④，③⑤⑥" "B. ①②⑥，③④⑤"…\n- prompt 放引导语原文，不要加任何图形描述\n\n### 2. 定义判断题\n- 题干：一段完整的概念定义，后面跟着「根据上述定义，下列…」「以下符合…的是」「以下不属于…的是」\n- 选项：4 个选项，每项是完整的事例描述\n- prompt 放全部定义文字 + 问题\n\n### 3. 类比推理题\n- 题干："A : B" 或 "（ ）对于 A 相当于（ ）对于 B" 格式\n- 选项：4 组类比关系\n\n### 4. 逻辑判断题\n- 题干：一段论述 + 问题（最能支持/削弱/推出…）\n- 选项：4 个选项，每项是完整推理\n\n### 5. 材料题（资料分析/一拖五）\n- 题干前有一段材料（文字描述或图表摘要），材料放入 material 字段\n- 每道小题独立一条记录，每条的 material 都填同一材料\n\n### 6. 判断题（对错题）\n- 选项固定为 {"正确", "错误"}\n- answer 为"正确"或"错误"\n\n## 二、选项处理规则\n- 每项选项必须是「大写字母 + 点 + 空格 + 内容」格式，如 "A. 这是一段选项文本"\n- 照抄原文，不改写\n- 图形推理题选项为占位符："A. A" "B. B" "C. C" "D. D"\n- 分类题选项完整保留编号文字："A. ①②④，③⑤⑥"\n- 判断题固定为 ["正确", "错误"]\n\n## 三、必须过滤的噪音\n- 季节标题（如「第 48 季·判断推理」）\n- 页码\n- 正确率、耗时、统计行\n- 「你的答案：」「正确答案：」等答题标记（答案本身保留）\n- 「参考答案与解析」「红领巾解析」「粉笔解析」等标题（解析内容保留，标题去掉）\n- 分隔线（————————————）\n- 题型标签（如「逻辑判断」「图形推理」等段落标题）\n\n## 四、分类规则（category 字段）\n根据题目内容判断所属类别，留空不确定：\n- 言语理解：选词填空、阅读理解、语句表达、排序、成语辨析\n- 判断推理：图形推理、定义判断、类比推理、逻辑判断\n- 数量关系：数学运算、数字推理、行程问题、工程问题\n- 资料分析：统计图表、增长率、比重、倍数计算\n- 常识判断：时政、法律、文史、科技、地理\n- 申论：概括、分析、对策、公文、大作文\n- 综应：事业单位综合应用能力\n\n## 五、输出格式\n{"questions":[{"prompt":"题干原文","material":"材料","options":["A. 选项1","B. 选项2"],"answer":"答案字母，单选如 A / 多选如 ABD / 判断如 正确","analysis":"解析原文","category":"分类"}]}\n\n要求：\n- 忠实原文，不编造、不补全缺失信息；原文没有的字段留空\n- 一道题切分成一个对象；同一材料下多道小题各自独立，每条的 material 都填同一材料\n- 选项顺序与原文一致\n- 只输出 JSON，不要任何其他文字、解释或 Markdown 代码块', skill: '', base_url: '', api_key: '', model: 'GLM-4.1V-Thinking-Flash', temperature: 0.1, max_tokens: 4000, enabled: 0 },
     ];
   }
 
@@ -629,16 +629,36 @@ export async function createAiApi({ request, tiku, query, defaultsUrl = DEFAULT_
           q = null;
         }
       }
+      // 从题干提取分值（如"（15分）"，与 server.mjs 同构）
+      const scoreMatch = (q?.content || '').match(/[（(]\s*(\d{1,2})\s*分\s*[）)]/);
+      const fullScore = scoreMatch ? scoreMatch[1] : null;
       const lines = [];
-      if (q) {
-        lines.push(`题目：${stripHtml(q.content)}`);
-        const opts = JSON.parse(q.options || '[]');
-        opts.forEach((o, i) => lines.push(`${String.fromCharCode(65 + i)}. ${stripHtml(o)}`));
+      if (q) lines.push(`【题目要求】${stripHtml(q.content)}`);
+      // 自动关联给定材料（优先题干引用的"给定资料N"精确取块，否则整卷合并；与 server.mjs 同构）
+      let materialText = '';
+      if (q && q.paperId && query && typeof query.paperMaterials === 'function') {
+        try {
+          const blocks = query.paperMaterials(q.paperId);
+          if (Array.isArray(blocks) && blocks.length) {
+            const refs = [...(q.content || '').matchAll(/给定资料\s*[一二三四五六七八九十\d]+/g)].map((m) => m[0]);
+            const wanted = refs.length ? refs.map((r) => r.replace(/给定资料\s*/, '')) : null;
+            const picked = wanted
+              ? blocks.filter((b) => wanted.includes(String(b.title || '').replace(/材料/, '')))
+              : blocks;
+            materialText = (picked.length ? picked : blocks).map((b) => `${b.title || ''}\n${b.text || ''}`).join('\n\n');
+          }
+        } catch {
+          materialText = '';
+        }
       }
-      if (answer) lines.push(`我的作答：${answer}`);
+      if (fullScore) lines.push(`【满分】${fullScore} 分`);
+      if (materialText) lines.push(`【给定材料】\n${materialText.slice(0, 8000)}`);
+      else lines.push('【注意】本题给定材料暂未关联，请基于题目要求评卷，并在结论中说明这一点。');
+      if (answer) lines.push(`【用户作答】${answer}`);
       if (image) lines.push(`作答图片：${String(image).slice(0, 200)}`);
+      lines.push('\n评分必须按【满分】口径（禁止按 100 分制），先定档再给分（小题一档顶格 90%、大作文一类文顶格 80%）；不得编造考试统计、考场数据或题目出处。');
       const r = await callChat(agent, lines.join('\n'), request);
-      if (r.content) return { content: r.content };
+      if (r.content) return { content: r.content, fullScore };
       return r;
     },
 
