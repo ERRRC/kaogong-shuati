@@ -58,6 +58,11 @@ pdf-work/
 solutions-progress.json
 backup-placeholder-questions.json
 
+# ===== 技能包 zip 构建产物与本地技能安装状态（不上传）=====
+skills/*.zip
+skills/.redskill-*
+skills/**/.redskill-installed
+
 # ===== 爬虫与数据采集脚本（仅本地保留，不随仓库分发）=====
 crawl.js
 crawl-all.js
