@@ -19,9 +19,3 @@ AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
 LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
 OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
 SOFTWARE.
-
----
-
-第三方组件说明：`public/vendor/**`（pdfjs、xlsx、sqljs 等）与 `skills/**`、
-`ref-skills/**` 内的技能包为上游开源/第三方副本，其版权与许可归各自上游所有，
-不在本仓库 MIT 授权范围内。题库数据与数据采集工具不随本仓库分发。
