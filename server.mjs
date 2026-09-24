@@ -35,9 +35,9 @@ const db = new DatabaseSync(DB_FILE, { readOnly: true });
 // 题库完整性守卫：重组不完整/分卷损坏会拼出缺表的库，这里给出可执行的指引而不是让接口报 no such table
 {
   const hasSchema = db.prepare(
-    "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('question_categories','questions','papers')"
+    "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('questions','papers')"
   ).get().n;
-  if (hasSchema < 3) {
+  if (hasSchema < 2) {
     console.error('✗ tiku.db 不完整（缺少题库核心表）。可能是分卷下载不完整或重组时 MD5 校验失败后被忽略。');
     console.error('  处理：删除 tiku.db → 重新 git clone 本仓库 → 再运行 node tools/reassemble-tiku.mjs（看它是否打印 MD5 校验通过）。');
     process.exit(1);
@@ -48,6 +48,55 @@ initAiConfig(); // 初始化 ai-config.db（首次自动写入五个 AI 默认�
 // ---------- 做题记录库（可写 practice.db，独立于只读 tiku.db） ----------
 const PRACTICE_DB = path.join(__dirname, 'practice.db');
 const pdb = new DatabaseSync(PRACTICE_DB, { timeout: 10000 });
+
+// ---------- 派生索引自检（question_categories / q_materials / q_material_map 存于 practice.db） ----------
+// 这三张表是纯派生数据（无用户数据）：新机上由随仓库分发的 tiku-index.db 自动灌入，一次性。
+{
+  const DERIVED = ['question_categories', 'q_materials', 'q_material_map'];
+  const exists = (t) =>
+    pdb.prepare("SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name=?").get(t).n > 0;
+  const missing = DERIVED.filter((t) => !exists(t));
+  if (missing.length > 0) {
+    const IDX_FILE = path.join(__dirname, 'tiku-index.db');
+    if (!fs.existsSync(IDX_FILE)) {
+      console.error(`✗ practice.db 缺少派生索引表（${missing.join(', ')}），且找不到 tiku-index.db。`);
+      console.error('  请确认已完整 git clone 本仓库（勿用第三方下载工具），仓库根目录应有 tiku-index.db。');
+      process.exit(1);
+    }
+    console.log('… 首次运行：从 tiku-index.db 灌入派生索引（一次性，不影响你的做题记录）');
+    pdb.exec(`ATTACH DATABASE '${IDX_FILE.replace(/'/g, "''")}' AS idxsrc`);
+    pdb.exec(`
+      CREATE TABLE IF NOT EXISTS question_categories (
+        question_id INTEGER NOT NULL,
+        subject TEXT NOT NULL,
+        category TEXT NOT NULL,
+        sub TEXT NOT NULL,
+        updated_at TEXT DEFAULT (datetime('now','localtime')),
+        PRIMARY KEY (question_id, subject)
+      );
+      CREATE INDEX IF NOT EXISTS idx_qc_category ON question_categories(category, sub);
+      CREATE TABLE IF NOT EXISTS q_materials (
+        material_id INTEGER NOT NULL,
+        subject TEXT NOT NULL,
+        content TEXT,
+        updated_at TEXT DEFAULT (datetime('now','localtime')),
+        PRIMARY KEY (material_id, subject)
+      );
+      CREATE TABLE IF NOT EXISTS q_material_map (
+        question_id INTEGER NOT NULL,
+        subject TEXT NOT NULL,
+        material_id INTEGER,
+        PRIMARY KEY (question_id, subject)
+      );
+    `);
+    for (const t of DERIVED) {
+      const n = pdb.prepare(`INSERT OR REPLACE INTO main.${t} SELECT * FROM idxsrc.${t}`).run().changes;
+      console.log(`  ${t}: ${n} 行`);
+    }
+    pdb.exec('DETACH DATABASE idxsrc');
+    console.log('… 索引灌入完成');
+  }
+}
 // 附加只读题库,供 practice.db 侧的统计 SQL 引用真实题目(排除已删题的索引残留)
 pdb.exec(`ATTACH DATABASE ${JSON.stringify(DB_FILE)} AS tiku`);
 pdb.exec(`

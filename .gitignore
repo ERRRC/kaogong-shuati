@@ -39,6 +39,7 @@ backup/
 粉笔/
 # 题库与材料已获授权随仓库分发（tiku.db 以 tiku.db.part-* 分卷形式入库，不匹配 *.db）
 !materials.db
+!tiku-index.db
 
 # ===== 敏感文件（切勿提交！）=====
 cookie*.txt
