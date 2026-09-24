@@ -37,6 +37,8 @@ _auth-rollback-backup/
 app-assets/
 backup/
 粉笔/
+# 题库与材料已获授权随仓库分发（tiku.db 以 tiku.db.part-* 分卷形式入库，不匹配 *.db）
+!materials.db
 
 # ===== 敏感文件（切勿提交！）=====
 cookie*.txt
@@ -48,6 +50,7 @@ ai-config.db
 *.keystore
 .env
 .env.*
+!.env.example
 
 # ===== 本地工具状态 / 数据目录（不上传）=====
 .workbuddy/
@@ -57,6 +60,20 @@ pdf-src/
 pdf-work/
 solutions-progress.json
 backup-placeholder-questions.json
+
+# ===== 脑库 vault（Obsidian 端）：已是独立 git 仓库，单独发布，勿并入本仓库 =====
+workbench/vault/
+workbench/vault-yy/
+
+# ===== 脑库工作数据 / 分发产物（本地，体积大；范围口径文件单独放行）=====
+# 注意：必须写 workbench/data/* 而非 workbench/data/，否则父目录被排除后 ! 放行会失效
+workbench/data/*
+!workbench/data/scope-manifest.json
+workbench/dist-upload/
+
+# ===== 行测真题原题副本（由 tiku.db 生成，体积大 ~200MB，可随时重建）=====
+# 重建: node workbench/scripts/export-raw-questions.mjs
+行测真题/
 
 # ===== 技能包 zip 构建产物与本地技能安装状态（不上传）=====
 skills/*.zip

@@ -8,7 +8,7 @@
 
 > 📄 **许可**：本仓库代码以 [MIT](LICENSE) 许可开源；`public/vendor/**`、`skills/**`、`ref-skills/**` 内的第三方组件与技能包副本保留各自上游许可，不在 MIT 授权范围内。
 >
-> ⚠️ **版权与合规**：题库数据与数据采集工具**不随本仓库分发**（数据版权归粉笔等来源方）。应用读取本地生成的 SQLite 题库（`tiku.db` 等），克隆仓库后需自行准备数据方可刷题。题库数据与第三方技能包仅供个人学习，请勿商用。
+> ⚠️ **版权与合规**：题库数据（`tiku.db` / `materials.db` 及题目配图）版权归粉笔等来源方，已获来源方授权随本仓库分发，**仅供个人学习备考，请勿商用或二次分发**。数据采集工具不随本仓库分发。`tiku.db` 因超过 GitHub 单文件 100MB 限制被切成 `tiku.db.part-*` 分卷，克隆后运行 `node tools/reassemble-tiku.mjs` 一次即可还原（脚本自带 MD5 自校验）。
 
 ## 功能特性
 
@@ -37,8 +37,8 @@
   node server.mjs 3000
   ```
 
-- 首次运行自动建表；AI 功能需在「AI 设置」页（`http://localhost:3000/?view=ai`）配置 base_url + api_key（DeepSeek/通义/GLM/OpenAI/本地 Ollama 等 OpenAI 兼容网关均可，测试按钮可先试跑）
-- 数据文件：`tiku.db`（只读题库）、`practice.db`（做题记录）、`ai-config.db`（AI 配置）均为本地生成，已加入 .gitignore
+- 首次克隆后先运行 `node tools/reassemble-tiku.mjs` 重组题库（见上方版权说明）；AI 功能需在「AI 设置」页（`http://localhost:3000/?view=ai`）配置 base_url + api_key（DeepSeek/通义/GLM/OpenAI/本地 Ollama 等 OpenAI 兼容网关均可，测试按钮可先试跑）
+- 数据文件：`tiku.db`（只读题库，随仓库分卷分发）、`materials.db`（申论材料）；`practice.db`（做题记录）、`ai-config.db`（AI 配置）为本地生成，不入仓库
 - Android 打包：`app/` 为 Capacitor 工程，完整构建步骤见 [`BUILD_MANUAL.md`](BUILD_MANUAL.md)（含第三方构建者的 Debug 包路线）
 
 ## 目录结构
