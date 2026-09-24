@@ -25,11 +25,24 @@ const PUBLIC_DIR = path.join(__dirname, 'public');
 const outDir = path.join(__dirname, 'out');
 
 if (!fs.existsSync(DB_FILE)) {
-  console.error(`✗ 找不到题库文件: ${DB_FILE}\n  题库数据与采集工具不随本仓库分发，请先在本地生成 tiku.db`);
+  console.error(`✗ 找不到题库文件: ${DB_FILE}`);
+  console.error('  题库以 tiku.db.part-* 分卷随仓库分发，请先运行一次：node tools/reassemble-tiku.mjs');
   process.exit(1);
 }
 
 const db = new DatabaseSync(DB_FILE, { readOnly: true });
+
+// 题库完整性守卫：重组不完整/分卷损坏会拼出缺表的库，这里给出可执行的指引而不是让接口报 no such table
+{
+  const hasSchema = db.prepare(
+    "SELECT COUNT(*) AS n FROM sqlite_master WHERE type='table' AND name IN ('question_categories','questions','papers')"
+  ).get().n;
+  if (hasSchema < 3) {
+    console.error('✗ tiku.db 不完整（缺少题库核心表）。可能是分卷下载不完整或重组时 MD5 校验失败后被忽略。');
+    console.error('  处理：删除 tiku.db → 重新 git clone 本仓库 → 再运行 node tools/reassemble-tiku.mjs（看它是否打印 MD5 校验通过）。');
+    process.exit(1);
+  }
+}
 initAiConfig(); // 初始化 ai-config.db（首次自动写入五个 AI 默认配置）
 
 // ---------- 做题记录库（可写 practice.db，独立于只读 tiku.db） ----------
@@ -238,6 +251,11 @@ const MIME = {
   '.css': 'text/css; charset=utf-8',
   '.svg': 'image/svg+xml',
   '.png': 'image/png',
+  '.jpg': 'image/jpeg',
+  '.jpeg': 'image/jpeg',
+  '.gif': 'image/gif',
+  '.bmp': 'image/bmp',
+  '.webp': 'image/webp',
   '.ico': 'image/x-icon',
   '.json': 'application/json; charset=utf-8',
   '.wasm': 'application/wasm',
